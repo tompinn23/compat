@@ -1,7 +1,7 @@
 {
   "required": true,
   "minVersion": "0.7.11",
-  "package": "dev.example.compat.mc1710.mixin",
+  "package": "org.yonside.compat.mc1710.mixin",
   "refmap": "mixins.compatcore.refmap.json",
   "target": "@env(DEFAULT)",
   "compatibilityLevel": "JAVA_8",

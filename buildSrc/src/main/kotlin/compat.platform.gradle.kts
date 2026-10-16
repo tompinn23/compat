@@ -14,6 +14,13 @@ configurations.implementation {
     extendsFrom(embed)
 }
 
+// Filled in by each module with its shadeDowngradedApi output: named mappings, Java 8 bytecode.
+// The example mods put this on their dev run classpath.
+configurations.create("devModElements") {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+
 dependencies {
     // By configuration name, so Gradle's JVM-version matching doesn't reject core on a Java 8 project.
     embed(project(path = ":core", configuration = "embedElements"))
@@ -40,6 +47,8 @@ tasks.processResources {
         "version" to project.version.toString(),
         "mod_id" to project.property("mod_id").toString(),
         "mod_name" to project.property("mod_name").toString(),
+        "mod_description" to project.property("mod_description").toString(),
+        "mod_license" to project.property("mod_license").toString(),
     )
     inputs.properties(props)
     filesMatching(listOf("mcmod.info", "META-INF/mods.toml")) {

@@ -7,6 +7,7 @@ plugins {
     id("dev.architectury.loom")
     id("xyz.wagyourtail.jvmdowngrader")
     id("compat.platform")
+    id("compat.publish")
 }
 
 val modId = property("mod_id") as String
@@ -59,6 +60,7 @@ dependencies {
 }
 
 tasks.jar {
+    archiveClassifier = "dev"
     manifest.attributes(
         "Specification-Title" to modId,
         "Specification-Version" to "1",
@@ -79,7 +81,12 @@ val shadeDowngradedApi = tasks.named<ShadeJar>("shadeDowngradedApi") {
     archiveClassifier = "dev-shaded"
 }
 
+artifacts {
+    add("devModElements", shadeDowngradedApi)
+}
+
 tasks.remapJar {
+    archiveClassifier = ""
     dependsOn(shadeDowngradedApi)
     inputFile = shadeDowngradedApi.flatMap { it.archiveFile }
 }
@@ -92,4 +99,15 @@ val remapJava21Jar = tasks.register<RemapJarTask>("remapJava21Jar") {
 
 tasks.assemble {
     dependsOn(remapJava21Jar)
+}
+
+publishing {
+    publications {
+        named<MavenPublication>("mod") {
+            artifact(tasks.remapJar)                  // release jar, downgraded to Java 8
+            artifact(remapJava21Jar)                  // -java21
+            artifact(tasks.jar)                       // -dev, what consumers compile against
+            artifact(tasks.named<Jar>("sourcesJar"))  // -sources
+        }
+    }
 }

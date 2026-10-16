@@ -6,10 +6,11 @@ plugins {
     id("com.gtnewhorizons.retrofuturagradle")
     id("xyz.wagyourtail.jvmdowngrader")
     id("compat.platform")
+    id("compat.publish")
 }
 
 val modId = property("mod_id") as String
-val coremodClass = "dev.example.compat.mc1122.CompatCoremod"
+val coremodClass = "org.yonside.compat.mc1122.CompatCoremod"
 val refmap = "mixins.$modId.refmap.json"
 val mappingChannel = property("mapping_channel_1122") as String
 val mappingVersion = property("mapping_version_1122") as String
@@ -57,6 +58,7 @@ dependencies {
 }
 
 tasks.jar {
+    archiveClassifier = "dev"
     manifest.attributes(
         "FMLCorePlugin" to coremodClass,
         "FMLCorePluginContainsFMLMod" to "true",
@@ -75,12 +77,17 @@ val shadeDowngradedApi = tasks.named<ShadeJar>("shadeDowngradedApi") {
     archiveClassifier = "dev-shaded"
 }
 
+artifacts {
+    add("devModElements", shadeDowngradedApi)
+}
+
 val reobfJar = tasks.named<ReobfuscatedJar>("reobfJar") {
     archiveClassifier = "java21"
 }
 
 // Created by RFG's reobf<JarTask> rule.
 val reobfDowngradedJar = tasks.named<ReobfuscatedJar>("reobfShadeDowngradedApi") {
+    archiveClassifier = ""
     extraSrgFiles.from(reobfJar.map { it.extraSrgFiles })
     extraSrgEntries.addAll(reobfJar.flatMap { it.extraSrgEntries })
 }
@@ -98,5 +105,16 @@ listOf("runClient", "runServer").forEach { runTask ->
         dependsOn(shadeDowngradedApi)
         classpath = files(shadeDowngradedApi) +
             files(original).filter { it != devJar.get().asFile && it !in embed }
+    }
+}
+
+publishing {
+    publications {
+        named<MavenPublication>("mod") {
+            artifact(reobfDowngradedJar)              // release jar, downgraded to Java 8
+            artifact(reobfJar)                        // -java21
+            artifact(tasks.jar)                       // -dev, what consumers compile against
+            artifact(tasks.named<Jar>("sourcesJar"))  // -sources
+        }
     }
 }

@@ -1,12 +1,12 @@
 modLoader="javafml"
 loaderVersion="[36,)"
-license="All Rights Reserved"
+license="${mod_license}"
 
 [[mods]]
 modId="${mod_id}"
 version="${version}"
 displayName="${mod_name}"
-description="Cross-version MetaTileEntity framework"
+description="${mod_description}"
 
 [[dependencies.${mod_id}]]
     modId="forge"

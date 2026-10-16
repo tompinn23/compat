@@ -30,3 +30,8 @@ include(":core")
 include(":mc1710")
 include(":mc1122")
 include(":mc1165")
+
+include(":example:common")
+include(":example:mc1710")
+include(":example:mc1122")
+include(":example:mc1165")
