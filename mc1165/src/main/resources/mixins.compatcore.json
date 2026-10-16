@@ -1,0 +1,10 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.example.compat.mc1165.mixin",
+  "refmap": "mixins.compatcore.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": ["MixinLevel"],
+  "client": [],
+  "server": []
+}
