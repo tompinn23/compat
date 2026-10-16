@@ -1,0 +1,10 @@
+[{
+  "modid": "${mod_id}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "version": "${version}",
+  "mcversion": "1.12.2",
+  "authorList": [],
+  "requiredMods": ["${compat_mod_id}"],
+  "dependencies": ["${compat_mod_id}"]
+}]
