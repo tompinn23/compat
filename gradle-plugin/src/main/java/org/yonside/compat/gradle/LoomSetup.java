@@ -82,7 +82,7 @@ final class LoomSetup {
 
     /**
      * Dev runs use Java 8, so they must load the downgraded classes. The downgraded jar is unpacked into
-     * the layout Forge's userdev expects of a mod -- a resources directory (mods.toml, Mixin config) and
+     * the layout Forge's userdev expects of a mod -- a resources directory (mods.toml) and
      * a classes directory -- and every run's source set and the mod's files are pointed at it.
      */
     private static void configureDevRuns(Project project, String modId, TaskProvider<ShadeJar> shade, Configuration embed) {
@@ -129,15 +129,6 @@ final class LoomSetup {
                     t.getLogger().lifecycle("{}: MOD_CLASSES={}", t.getName(), modClasses);
                 });
             });
-    }
-
-    static void enableMixins(Project project, MixinOptions options) {
-        LoomGradleExtensionAPI loom = loom(project);
-        String config = options.getConfig().get();
-        loom.forge(forge -> forge.mixinConfig(config));
-        loom.getMixin().getDefaultRefmapName().set(options.getRefmap().get());
-        loom.getRuns().configureEach(run -> run.vmArgs("-Dmixin.debug.export=true", "-Dmixin.checks.interfaces=true"));
-        project.getTasks().named("jar", Jar.class, task -> task.getManifest().attributes(Map.of("MixinConfigs", config)));
     }
 
     private static LoomGradleExtensionAPI loom(Project project) {

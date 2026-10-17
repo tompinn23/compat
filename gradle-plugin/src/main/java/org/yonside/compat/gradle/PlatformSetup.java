@@ -4,10 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import kotlin.jvm.functions.Function1;
@@ -16,8 +13,6 @@ import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.attributes.Usage;
 import org.gradle.api.file.DuplicatesStrategy;
-import org.gradle.api.file.FileCollection;
-import org.gradle.api.file.RegularFile;
 import org.gradle.api.plugins.BasePluginExtension;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -59,16 +54,6 @@ import xyz.wagyourtail.jvmdg.gradle.task.ShadeJar;
 final class PlatformSetup {
 
     static final String PUBLICATION = "compat";
-    /** Resolvable: other version projects' mods to install in this project's dev runs. */
-    static final String DEV_RUN_MODS = "compatDevRunMods";
-    /** Resolvable: other version projects' Java 21 dev jars, for this project's modern-Java dev runs. */
-    static final String DEV_RUN_MODS_21 = "compatDevRunMods21";
-    /** Consumable: this project's downgraded dev-name jar, for other projects' dev runs. */
-    static final String DEV_MOD_ELEMENTS = "compatDevMod";
-    /** Consumable: this project's Java 21 dev-name jar, for other mods in the build to compile against. */
-    static final String DEV_ELEMENTS = "compatDev";
-    /** Consumable: the Java 8 release jar. */
-    static final String RELEASE_ELEMENTS = "compatRelease";
     static final String EMBED = "compatEmbed";
     /** Resolvable, in mod projects: the version's stub jar to link against. */
     static final String STUBS = "compatStubs";
@@ -91,8 +76,6 @@ final class PlatformSetup {
             case RFG -> RfgSetup.applyToolchain(project, ext);
             case LOOM -> LoomSetup.applyToolchain(project, ext);
         }
-        // After RFG / Loom, which apply the java plugin: JvmDowngrader's tasks start from the jar task.
-        project.getPluginManager().apply(JVMDowngraderPlugin.class);
         project.getPluginManager().apply(MavenPublishPlugin.class);
 
         JavaPluginExtension java = project.getExtensions().getByType(JavaPluginExtension.class);
@@ -172,6 +155,8 @@ final class PlatformSetup {
      */
     static void apply(Project project, CompatExtension ext, Project common) {
         Base base = applyBase(project, ext, common);
+        // After RFG / Loom, which apply the java plugin: JvmDowngrader's tasks start from the jar task.
+        project.getPluginManager().apply(JVMDowngraderPlugin.class);
         MinecraftTarget target = ext.getTarget();
         SourceSet main = base.main();
         Configuration embed = base.embed();
@@ -222,7 +207,7 @@ final class PlatformSetup {
             c.setDescription("Compat's Minecraft " + target.version + " stubs, which this mod is linked against.");
             stubAttributes(project, c);
             c.defaultDependencies(deps -> deps.add(project.getDependencies().create(
-                CompatPlugin.GROUP + ":" + ModSpec.COMPAT_CORE + "-" + target.version + ":" + CompatPlugin.version())));
+                CompatPlugin.GROUP + ":" + CompatPlugin.ARTIFACT_PREFIX + "-" + target.version + ":" + CompatPlugin.version())));
         });
         TaskProvider<LinkCompatClasses> link = project.getTasks().register("linkCompat", LinkCompatClasses.class, task -> {
             task.setDescription("Links the mod against Compat's Minecraft " + target.version + " stubs.");
@@ -247,13 +232,11 @@ final class PlatformSetup {
             task.getInputFile().set(devJar.flatMap(Jar::getArchiveFile));
             task.getArchiveClassifier().set("dev-downgraded");
         });
-        Provider<String> shadePath = ext.getShadePath();
+        // JvmDowngrader's stubs go next to Compat's, under the mod's own package.
+        Provider<String> shadePath = ext.getLinkPath().map(path -> path + "jvmdg/");
         TaskProvider<ShadeJar> shade = project.getTasks().named("shadeDowngradedApi", ShadeJar.class, task -> {
             task.getArchiveClassifier().set("dev-shaded");
-            task.getShadePath().set(project.provider(() -> {
-                String path = shadePath.get();
-                return (Function1<String, String>) jarName -> path;
-            }));
+            task.getShadePath().set(shadePath.map(path -> (Function1<String, String>) jarName -> path));
         });
 
         ReleaseJars release = switch (target.toolchain) {
@@ -262,10 +245,8 @@ final class PlatformSetup {
         };
         project.getTasks().named(LifecycleBasePlugin.ASSEMBLE_TASK_NAME).configure(task -> task.dependsOn(release.release(), release.java21()));
 
-        consumable(project, DEV_ELEMENTS, devJar);
-        consumable(project, DEV_MOD_ELEMENTS, shade);
-        consumable(project, RELEASE_ELEMENTS, release.release());
-        configureDevRuns(project);
+        File loomRunDir = target.toolchain == MinecraftTarget.Toolchain.LOOM ? project.file("run") : null;
+        acceptEulaBefore(project, "runServer", loomRunDir);
 
         PublishingExtension publishing = project.getExtensions().getByType(PublishingExtension.class);
         MavenPublication publication = publishing.getPublications().create(PUBLICATION, MavenPublication.class, pub -> {
@@ -277,17 +258,6 @@ final class PlatformSetup {
             describe(pub, mod, " for Minecraft " + target.version);
         });
         project.afterEvaluate(p -> publication.setArtifactId(mod.getModId().get() + "-" + target.version));
-    }
-
-    static void enableMixins(Project project, CompatExtension ext, MixinOptions options) {
-        MinecraftTarget target = ext.getTarget();
-        switch (target.toolchain) {
-            case RFG -> RfgSetup.enableMixins(project, target, options);
-            case LOOM -> LoomSetup.enableMixins(project, options);
-        }
-        if (target.mixinProvider != null) {
-            ext.getMod().requires(target.mixinProvider.modId());
-        }
     }
 
     static void describe(MavenPublication pub, ModInfo mod, String suffix) {
@@ -303,106 +273,30 @@ final class PlatformSetup {
         task.getOptions().getRelease().set(21);
     }
 
-    private static void consumable(Project project, String name, TaskProvider<? extends Task> artifact) {
-        Configuration configuration = project.getConfigurations().create(name, c -> {
-            c.setCanBeConsumed(true);
-            c.setCanBeResolved(false);
-            // Gradle 9 requires consumable configurations to differ from archives and each other by attributes.
-            c.getAttributes().attribute(CompatPlugin.VARIANT, name);
-        });
-        project.getArtifacts().add(configuration.getName(), artifact);
-    }
-
     /**
-     * Dev runs install {@link #DEV_RUN_MODS} in their mods folder rather than on the classpath, exactly
-     * as a player would, and accept Mojang's EULA only when asked to with -Pcompat.acceptEula=true (CI's
-     * server smoke test does). The Java 8 runs get other mods' downgraded jars; modern-Java runs such as
-     * lwjgl3ify's get their Java 21 dev jars ({@link #DEV_RUN_MODS_21}).
+     * Writes eula.txt before {@code run} when asked to with -Pcompat.acceptEula=true (CI's server smoke
+     * test does); a dev run never accepts Mojang's EULA silently. A task of its own rather than a doFirst
+     * on the run, because RFG checks the EULA in an action of its own that would come first.
+     *
+     * @param fixedRunDir the run directory, for Loom, which only sets a run task's working directory when
+     *                    it launches; null to use the run task's own
      */
-    private static void configureDevRuns(Project project) {
-        Configuration mods = devRunModsConfiguration(project, DEV_RUN_MODS, "Java 8 dev runs");
-        // Filled by compat.devRunMod; compat.lwjgl3ify installs it in its runs.
-        devRunModsConfiguration(project, DEV_RUN_MODS_21, "Java 21 dev runs (lwjgl3ify)");
-        boolean loom = project.getPluginManager().hasPlugin("dev.architectury.loom");
-        // Loom only sets a run task's working directory when it launches, so use its default run directory.
-        File loomRunDir = loom ? project.getLayout().getProjectDirectory().dir("run").getAsFile() : null;
-        installModsBeforeRuns(project, List.of("runClient", "runServer"), mods, loomRunDir);
-    }
-
-    private static Configuration devRunModsConfiguration(Project project, String name, String purpose) {
-        return project.getConfigurations().create(name, c -> {
-            c.setCanBeConsumed(false);
-            c.setCanBeResolved(true);
-            c.setTransitive(false);
-            c.setDescription("Mods installed in this project's " + purpose + ", e.g. via compat.devRunMod(\":other:mc1710\").");
-        });
-    }
-
-    /**
-     * A prepare task per run, rather than a doFirst on the run: RFG checks the EULA in an action of its
-     * own, which would otherwise come first on runs it sets up later (runServer21).
-     */
-    static void installModsBeforeRuns(Project project, List<String> runs, Configuration mods, File fixedRunDir) {
-        boolean acceptEula = project.getProviders().gradleProperty("compat.acceptEula").map(Boolean::parseBoolean).getOrElse(false);
-        for (String name : runs) {
-            boolean writeEula = name.startsWith("runServer") && acceptEula;
-            TaskProvider<Task> install = project.getTasks().register("prepare" + Character.toUpperCase(name.charAt(0)) + name.substring(1), task -> {
-                task.setDescription("Installs the dev-run mods in " + name + "'s mods folder.");
-                task.dependsOn(mods);
-                FileCollection modFiles = mods;
-                task.doLast(t -> {
-                    File dir = fixedRunDir != null ? fixedRunDir : project.getTasks().named(name, JavaExec.class).get().getWorkingDir();
-                    if (writeEula) {
-                        dir.mkdirs();
-                        write(new File(dir, "eula.txt"), "eula=true\n");
-                    }
-                    File modsDir = new File(dir, "mods");
-                    modsDir.mkdirs();
-                    // Drop any copy from an earlier version of the same mod so the loader does not see it twice.
-                    Set<String> names = modFiles.getFiles().stream().map(f -> baseName(f.getName())).collect(Collectors.toSet());
-                    File[] existing = modsDir.listFiles();
-                    if (existing != null) {
-                        for (File old : existing) {
-                            if (names.contains(baseName(old.getName()))) {
-                                old.delete();
-                            }
-                        }
-                    }
-                    for (File file : modFiles.getFiles()) {
-                        copy(file, new File(modsDir, file.getName()));
-                    }
-                    t.getLogger().lifecycle("{}: installed dev-run mods {} in {}", name,
-                        modFiles.getFiles().stream().map(File::getName).toList(), modsDir);
-                });
+    static void acceptEulaBefore(Project project, String run, File fixedRunDir) {
+        if (!project.getProviders().gradleProperty("compat.acceptEula").map(Boolean::parseBoolean).getOrElse(false)) {
+            return;
+        }
+        TaskProvider<Task> eula = project.getTasks().register("acceptEula" + Character.toUpperCase(run.charAt(0)) + run.substring(1), task -> {
+            task.setDescription("Accepts Mojang's EULA for " + run + " (-Pcompat.acceptEula=true).");
+            task.doLast(t -> {
+                File dir = fixedRunDir != null ? fixedRunDir : project.getTasks().named(run, JavaExec.class).get().getWorkingDir();
+                dir.mkdirs();
+                try {
+                    Files.writeString(new File(dir, "eula.txt").toPath(), "eula=true\n");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
             });
-            project.getTasks().withType(JavaExec.class).matching(t -> t.getName().equals(name)).configureEach(run -> run.dependsOn(install));
-        }
-    }
-
-    /** {@code mymod-1.7.10-0.1.0-dev-shaded.jar} → {@code mymod-1.7.10}: archive name up to the version. */
-    private static String baseName(String fileName) {
-        String[] parts = fileName.split("-");
-        return parts.length >= 2 ? parts[0] + "-" + parts[1] : fileName;
-    }
-
-    private static void write(File file, String content) {
-        try {
-            Files.writeString(file.toPath(), content);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private static void copy(File from, File to) {
-        try {
-            Files.copy(from.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** For {@link RfgSetup} and {@link LoomSetup}: files of {@code embed} and the dev jar, to drop from dev-run classpaths. */
-    static boolean isJava21Output(File file, Provider<? extends RegularFile> devJar, FileCollection embed) {
-        return file.equals(devJar.get().getAsFile()) || embed.contains(file);
+        });
+        project.getTasks().withType(JavaExec.class).matching(t -> t.getName().equals(run)).configureEach(t -> t.dependsOn(eula));
     }
 }

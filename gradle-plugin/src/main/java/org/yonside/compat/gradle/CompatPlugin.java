@@ -42,6 +42,9 @@ public class CompatPlugin implements Plugin<Project> {
     /** Maven group of Compat's own artifacts: the API and each version's stubs. */
     public static final String GROUP = "org.yonside.compat";
 
+    /** Their artifact prefix: compatcore-common, compatcore-1.7.10, ... */
+    public static final String ARTIFACT_PREFIX = "compatcore";
+
     /** This plugin's version, which is also the version of the stubs it links against by default. */
     static String version() {
         Properties properties = new Properties();

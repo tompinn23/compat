@@ -1,7 +1,5 @@
 package org.yonside.compat.gradle;
 
-import java.util.Map;
-
 import javax.inject.Inject;
 
 import com.gtnewhorizons.retrofuturagradle.MinecraftExtension;
@@ -27,8 +25,9 @@ import org.gradle.api.provider.Property;
  * </pre>
  *
  * A version project embeds its common project's jar, compiles against Minecraft and Forge, generates
- * whatever {@code @Mod} class and metadata the author has not written, downgrades the result to Java 8
- * and publishes {@code <modId>-<minecraft>}. See {@link CompatPlugin}.
+ * whatever {@code @Mod} class and metadata the author has not written, links the result against
+ * Compat's stubs for the version, downgrades it to Java 8 and publishes {@code <modId>-<minecraft>}.
+ * See {@link CompatPlugin}.
  */
 public abstract class CompatExtension {
 
@@ -42,15 +41,12 @@ public abstract class CompatExtension {
     private MinecraftTarget target;
     private String commonPath;
     private CompatExtension common;
-    private boolean mixins;
 
     @Inject
     public CompatExtension(Project project) {
         this.project = project;
         this.mod = project.getObjects().newInstance(ModInfo.class);
         mod.getVersion().convention(project.provider(() -> project.getVersion().toString()));
-        getShadePath().convention(mod.getModId().map(modId ->
-            project.getGroup().toString().replace('.', '/') + "/" + modId + "/jvmdg/"));
         getLinkPath().convention(mod.getModId().map(modId ->
             project.getGroup().toString().replace('.', '/') + "/" + modId + "/compat/"));
     }
@@ -65,15 +61,9 @@ public abstract class CompatExtension {
     }
 
     /**
-     * Where JvmDowngrader's stubs are relocated inside this project's Java 8 jar. Must be unique to the
-     * mod. Defaults to the project group as a path, then the mod id, then {@code jvmdg/}.
-     */
-    public abstract Property<String> getShadePath();
-
-    /**
      * Where the Compat classes this mod uses (stubs, API value types) are copied into its jar by
-     * linking. Must be unique to the mod. Defaults to the project group as a path, then the mod id, then
-     * {@code compat/}.
+     * linking, with JvmDowngrader's under {@code jvmdg/} inside. Must be unique to the mod. Defaults to
+     * the project group as a path, then the mod id, then {@code compat/}.
      */
     public abstract Property<String> getLinkPath();
 
@@ -135,57 +125,9 @@ public abstract class CompatExtension {
     }
 
     /**
-     * Enables Mixin with the defaults: config {@code mixins.<modId>.json} (hand-written, in this
-     * project's resources), refmap {@code mixins.<modId>.refmap.json}, and on 1.7.10 / 1.12.2 the
-     * UniMixins / MixinBooter dev jar, which the metadata then lists as a required mod.
-     */
-    public void mixins() {
-        mixins(options -> {});
-    }
-
-    public void mixins(Action<? super MixinOptions> action) {
-        requireMinecraft("mixins");
-        if (mixins) {
-            throw new GradleException("compat.mixins is already enabled in " + project);
-        }
-        mixins = true;
-        MixinOptions options = project.getObjects().newInstance(MixinOptions.class);
-        String modId = mod.getModId().get();
-        options.getConfig().convention("mixins." + modId + ".json");
-        options.getRefmap().convention("mixins." + modId + ".refmap.json");
-        if (target.mixinProvider != null) {
-            options.getProvider().convention(target.mixinProvider.dependency());
-        }
-        action.execute(options);
-        PlatformSetup.enableMixins(project, this, options);
-    }
-
-    /** 1.7.10 / 1.12.2: registers {@code className} as the jar's FML coremod, in production and in dev runs. */
-    public void coremod(String className) {
-        requireMinecraft("coremod");
-        if (target.toolchain != MinecraftTarget.Toolchain.RFG) {
-            throw new GradleException("compat.coremod: Minecraft " + target.version + " has no FML coremods.");
-        }
-        RfgSetup.coremod(project, className);
-    }
-
-    /**
-     * Installs another version project's mod (its downgraded dev-name jar) in this project's dev runs,
-     * e.g. {@code devRunMod(":example:mc1710")}, the way a player adds a jar to mods/.
-     */
-    public void devRunMod(String projectPath) {
-        requireMinecraft("devRunMod");
-        project.getDependencies().add(PlatformSetup.DEV_RUN_MODS,
-            project.getDependencies().project(Map.of("path", projectPath, "configuration", PlatformSetup.DEV_MOD_ELEMENTS)));
-        // Modern-Java runs (lwjgl3ify) load its Java 21 dev jar, no downgrade.
-        project.getDependencies().add(PlatformSetup.DEV_RUN_MODS_21,
-            project.getDependencies().project(Map.of("path", projectPath, "configuration", PlatformSetup.DEV_ELEMENTS)));
-    }
-
-    /**
      * 1.7.10: adds {@code runClient21} / {@code runServer21}, which run the game on Java 21 with
      * lwjgl3ify, loading the Java 21 dev jars directly -- what players on lwjgl3ify use the -java21 jar
-     * for. They run in run/lwjgl3ify, and {@link #devRunMod} mods get their Java 21 jars there.
+     * for. They run in run/lwjgl3ify.
      */
     public void lwjgl3ify() {
         lwjgl3ify(RfgSetup.DEFAULT_LWJGL3IFY);

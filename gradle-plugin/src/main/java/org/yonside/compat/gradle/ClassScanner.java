@@ -22,7 +22,7 @@ import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
-/** Reads class headers and class-level annotations out of class directories and jars. */
+/** Reads class files out of directories and jars, and their headers and class-level annotations. */
 final class ClassScanner {
 
     private ClassScanner() {}
@@ -69,39 +69,45 @@ final class ClassScanner {
 
     /** Every class in {@code roots}, which may be directories or jars; missing roots are skipped. */
     static Map<String, ScannedClass> scan(Iterable<File> roots) throws IOException {
+        Map<String, byte[]> bytes = new HashMap<>();
+        readClasses(roots, bytes);
         Map<String, ScannedClass> classes = new HashMap<>();
+        for (byte[] classFile : bytes.values()) {
+            ScannedClass scanned = new ScannedClass();
+            new ClassReader(classFile).accept(scanned, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            classes.put(scanned.name, scanned);
+        }
+        return classes;
+    }
+
+    /** Every class file in directories or jars, by internal name; earlier roots win, missing ones are skipped. */
+    static void readClasses(Iterable<File> roots, Map<String, byte[]> into) throws IOException {
         for (File root : roots) {
             if (root.isDirectory()) {
                 try (Stream<Path> paths = Files.walk(root.toPath())) {
                     for (Path path : paths.filter(p -> p.toString().endsWith(".class")).toList()) {
-                        try (InputStream in = Files.newInputStream(path)) {
-                            add(classes, in);
-                        }
+                        put(into, Files.readAllBytes(path));
                     }
                 }
-            } else if (root.isFile() && root.getName().endsWith(".jar")) {
+            } else if (root.isFile()) {
                 try (ZipFile jar = new ZipFile(root)) {
                     Enumeration<? extends ZipEntry> entries = jar.entries();
                     while (entries.hasMoreElements()) {
                         ZipEntry entry = entries.nextElement();
-                        // Multi-release and module descriptors are never mod classes.
                         if (entry.getName().endsWith(".class") && !entry.getName().startsWith("META-INF/")
                                 && !entry.getName().endsWith("module-info.class")) {
                             try (InputStream in = jar.getInputStream(entry)) {
-                                add(classes, in);
+                                put(into, in.readAllBytes());
                             }
                         }
                     }
                 }
             }
         }
-        return classes;
     }
 
-    private static void add(Map<String, ScannedClass> classes, InputStream in) throws IOException {
-        ScannedClass scanned = new ScannedClass();
-        new ClassReader(in).accept(scanned, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        classes.putIfAbsent(scanned.name, scanned);
+    private static void put(Map<String, byte[]> into, byte[] bytes) {
+        into.putIfAbsent(new ClassReader(bytes).getClassName(), bytes);
     }
 
     static List<ScannedClass> annotatedWith(Map<String, ScannedClass> classes, String descriptor) {

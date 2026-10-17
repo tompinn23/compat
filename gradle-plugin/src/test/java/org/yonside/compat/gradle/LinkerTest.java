@@ -78,7 +78,7 @@ class LinkerTest {
 
     private Map<String, byte[]> classes(Path root, String prefix) throws IOException {
         Map<String, byte[]> all = new TreeMap<>();
-        Linker.readClasses(List.of(root.toFile()), all);
+        ClassScanner.readClasses(List.of(root.toFile()), all);
         all.keySet().removeIf(name -> !name.startsWith(prefix));
         return all;
     }

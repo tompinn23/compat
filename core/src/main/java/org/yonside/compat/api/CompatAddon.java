@@ -1,7 +1,7 @@
 package org.yonside.compat.api;
 
 /**
- * The methods a mod built on Compat Core can implement, written once for every Minecraft version.
+ * The methods a mod built with Compat can implement, written once for every Minecraft version.
  *
  * <p>Annotate the implementation with {@link CompatMod} and apply the {@code org.yonside.compat.addon}
  * Gradle plugin. For each Minecraft version the plugin generates the real {@code @Mod} class, which

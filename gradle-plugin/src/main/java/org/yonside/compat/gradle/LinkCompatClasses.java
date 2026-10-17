@@ -52,7 +52,7 @@ public abstract class LinkCompatClasses extends DefaultTask {
     public void link() throws IOException {
         Linker linker = Linker.load(getStubs().getFiles(), getRelocationBase().get(), getMinecraft().get());
         Map<String, byte[]> mod = new TreeMap<>();
-        Linker.readClasses(List.of(getInput().get().getAsFile()), mod);
+        ClassScanner.readClasses(List.of(getInput().get().getAsFile()), mod);
         Map<String, byte[]> linked = linker.link(mod);
 
         Path out = getOutputDirectory().get().getAsFile().toPath();

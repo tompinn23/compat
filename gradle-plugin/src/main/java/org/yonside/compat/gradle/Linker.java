@@ -2,22 +2,15 @@ package org.yonside.compat.gradle;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 import org.gradle.api.GradleException;
 import org.objectweb.asm.AnnotationVisitor;
@@ -75,7 +68,7 @@ final class Linker {
      */
     static Linker load(Iterable<File> libraries, String relocationBase, String minecraft) throws IOException {
         Linker linker = new Linker(relocationBase, minecraft);
-        readClasses(libraries, linker.library);
+        ClassScanner.readClasses(libraries, linker.library);
         // Unwrap every @StubFor wrapper first, so the whole type map is known before stub methods are
         // keyed by their (mapped) descriptors.
         List<StubWrapper.Unwrapped> wrappers = new ArrayList<>();
@@ -252,35 +245,5 @@ final class Linker {
             return Type.getObjectType(typeMap.get(type.getInternalName()));
         }
         return type;
-    }
-
-    /** Every class in directories or jars, by internal name; earlier roots win. */
-    static void readClasses(Iterable<File> roots, Map<String, byte[]> into) throws IOException {
-        for (File root : roots) {
-            if (root.isDirectory()) {
-                try (Stream<Path> paths = Files.walk(root.toPath())) {
-                    for (Path path : paths.filter(p -> p.toString().endsWith(".class")).toList()) {
-                        put(into, Files.readAllBytes(path));
-                    }
-                }
-            } else if (root.isFile()) {
-                try (ZipFile jar = new ZipFile(root)) {
-                    Enumeration<? extends ZipEntry> entries = jar.entries();
-                    while (entries.hasMoreElements()) {
-                        ZipEntry entry = entries.nextElement();
-                        if (entry.getName().endsWith(".class") && !entry.getName().startsWith("META-INF/")
-                                && !entry.getName().endsWith("module-info.class")) {
-                            try (InputStream in = jar.getInputStream(entry)) {
-                                put(into, in.readAllBytes());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static void put(Map<String, byte[]> into, byte[] bytes) {
-        into.putIfAbsent(new ClassReader(bytes).getClassName(), bytes);
     }
 }

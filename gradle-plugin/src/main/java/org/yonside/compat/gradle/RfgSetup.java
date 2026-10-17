@@ -2,19 +2,15 @@ package org.yonside.compat.gradle;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import com.gtnewhorizons.retrofuturagradle.MinecraftExtension;
 import com.gtnewhorizons.retrofuturagradle.mcp.MCPTasks;
 import com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar;
 import com.gtnewhorizons.retrofuturagradle.minecraft.MinecraftTasks;
 import com.gtnewhorizons.retrofuturagradle.minecraft.RunMinecraftTask;
-import com.gtnewhorizons.retrofuturagradle.modutils.ModUtils;
 import com.gtnewhorizons.retrofuturagradle.util.Distribution;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.Dependency;
-import org.gradle.api.artifacts.ModuleDependency;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFile;
@@ -90,7 +86,8 @@ final class RfgSetup {
     static PlatformSetup.ReleaseJars configureJars(Project project, CompatExtension ext, TaskProvider<Jar> jar,
                                                    TaskProvider<Jar> linkedJar, TaskProvider<ShadeJar> shade,
                                                    Configuration embed) {
-        // RFG reobfuscates the unlinked jar too; it carries the Mixin mappings the others reuse.
+        // RFG reobfuscates the unlinked jar too; extra mappings set up on it (e.g. a Mixin refmap's, via
+        // compat.rfg) apply to the linked jars as well.
         TaskProvider<ReobfuscatedJar> reobfJar = project.getTasks().named("reobfJar", ReobfuscatedJar.class,
             task -> task.getArchiveClassifier().set("unlinked-srg"));
         // Both created by RFG's reobf<JarTask> rule.
@@ -108,40 +105,17 @@ final class RfgSetup {
         });
 
         // Dev runs use Java 8, so swap the unlinked jar and embedded common jar for the linked, downgraded jar.
-        Provider<RegularFile> devJar = jar.flatMap(Jar::getArchiveFile);
+        Provider<RegularFile> unlinked = jar.flatMap(Jar::getArchiveFile);
         FileCollection embedded = embed;
         for (String run : List.of("runClient", "runServer")) {
             project.getTasks().named(run, JavaExec.class, task -> {
                 FileCollection original = project.files(((ConfigurableFileCollection) task.getClasspath()).getFrom().toArray());
                 task.dependsOn(shade);
                 task.setClasspath(project.files(shade).plus(
-                    original.filter(file -> !PlatformSetup.isJava21Output(file, devJar, embedded))));
+                    original.filter(file -> !file.equals(unlinked.get().getAsFile()) && !embedded.contains(file))));
             });
         }
         return new PlatformSetup.ReleaseJars(reobfShaded, reobfLinked);
-    }
-
-    static void enableMixins(Project project, MinecraftTarget target, MixinOptions options) {
-        MinecraftTarget.MixinProvider provider = target.mixinProvider;
-        String providerNotation = options.getProvider().get();
-        project.getRepositories().maven(repo -> {
-            repo.setName("CompatMixin" + target.id);
-            repo.setUrl(provider.repository());
-        });
-
-        for (String extra : provider.processorExtras()) {
-            project.getDependencies().add("annotationProcessor", extra);
-        }
-        project.getDependencies().add("annotationProcessor", providerNotation);
-
-        // Adds the refmap and RFG's reobfuscation mappings for the Mixin annotation processor.
-        Object spec = project.getExtensions().getByType(ModUtils.class).enableMixins(providerNotation, options.getRefmap().get());
-        Dependency dependency = project.getDependencies().add("implementation", spec);
-        if (!provider.transitive() && dependency instanceof ModuleDependency module) {
-            module.setTransitive(false);
-        }
-
-        minecraft(project).getExtraRunJvmArguments().addAll("-Dmixin.debug.export=true", "-Dmixin.checks.interfaces=true");
     }
 
     /**
@@ -211,21 +185,11 @@ final class RfgSetup {
                 task.systemProperty("gradlestart.bouncerClient", "com.gtnewhorizons.retrofuturabootstrap.MainStartOnFirstThread");
                 task.systemProperty("gradlestart.bouncerServer", "com.gtnewhorizons.retrofuturabootstrap.Main");
                 task.getJavaLauncher().set(toolchains.launcherFor(spec -> spec.getLanguageVersion().set(JavaLanguageVersion.of(21))));
-                // Its own directory: its mods/ holds Java 21 jars, the Java 8 runs' mods/ downgraded ones.
+                // Its own directory, apart from the Java 8 runs' world and config.
                 task.setWorkingDir(project.file("run/lwjgl3ify"));
             });
         }
-        PlatformSetup.installModsBeforeRuns(project, List.of(RUN_CLIENT_21, RUN_SERVER_21),
-            project.getConfigurations().getByName(PlatformSetup.DEV_RUN_MODS_21), null);
-    }
-
-    /** Found via the FMLCorePlugin manifest entry in production and -Dfml.coreMods.load in dev. */
-    static void coremod(Project project, String className) {
-        project.getTasks().named("jar", Jar.class, task -> task.getManifest().attributes(Map.of(
-            "FMLCorePlugin", className,
-            "FMLCorePluginContainsFMLMod", "true",
-            "ForceLoadAsMod", "true")));
-        minecraft(project).getExtraRunJvmArguments().add("-Dfml.coreMods.load=" + className);
+        PlatformSetup.acceptEulaBefore(project, RUN_SERVER_21, null);
     }
 
     private static MinecraftExtension minecraft(Project project) {

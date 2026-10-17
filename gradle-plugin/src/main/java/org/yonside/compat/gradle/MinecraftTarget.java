@@ -7,25 +7,14 @@ import java.util.stream.Collectors;
 /**
  * Every Minecraft version a {@code compat { minecraft(...) }} project can build for, and the facts that
  * differ between them: which toolchain sets up Minecraft and Forge, which loader reads the jar, and the
- * defaults for mappings, Forge and Mixin. Adding a version means adding a constant here, and teaching
+ * defaults for mappings and Forge. Adding a version means adding a constant here, and teaching
  * {@link ModSourceGenerator} its lifecycle events if the loader is new.
  */
 public enum MinecraftTarget {
 
-    V1_7_10("1.7.10", Toolchain.RFG, Loader.CPW, null, null, null, 0,
-        null, null, null,
-        new MixinProvider("unimixins", "io.github.legacymoddingmc:unimixins:0.3.1:dev",
-            "https://nexus.gtnewhorizons.com/repository/public/", true,
-            List.of("org.ow2.asm:asm-debug-all:5.0.4", "com.google.guava:guava:24.1.1-jre", "com.google.code.gson:gson:2.13.2"))),
-    V1_12_2("1.12.2", Toolchain.RFG, Loader.FML, null, null, null, 0,
-        "stable", "39", null,
-        new MixinProvider("mixinbooter", "zone.rong:mixinbooter:11.18",
-            "https://maven.cleanroommc.com", false,
-            List.of("org.ow2.asm:asm-debug-all:5.2", "com.google.guava:guava:32.1.2-jre", "com.google.code.gson:gson:2.8.9"))),
-    V1_16_5("1.16.5", Toolchain.LOOM, Loader.FORGE, "[36,)", "[36.2,)", "[1.16.5,1.17)", 6,
-        null, null, "1.16.5-36.2.39",
-        // Forge 1.16.5 ships Mixin itself.
-        null);
+    V1_7_10("1.7.10", Toolchain.RFG, Loader.CPW, null, null, null, 0, null, null, null),
+    V1_12_2("1.12.2", Toolchain.RFG, Loader.FML, null, null, null, 0, "stable", "39", null),
+    V1_16_5("1.16.5", Toolchain.LOOM, Loader.FORGE, "[36,)", "[36.2,)", "[1.16.5,1.17)", 6, null, null, "1.16.5-36.2.39");
 
     /** The Gradle plugin that sets up Minecraft and Forge in the version's project. */
     public enum Toolchain {
@@ -54,18 +43,6 @@ public enum MinecraftTarget {
         }
     }
 
-    /**
-     * The library that provides Mixin on a version whose Forge does not.
-     *
-     * @param modId           its mod id, added to the metadata's required mods when mixins are enabled
-     * @param dependency      the dev artifact, compiled against and run in dev
-     * @param repository      where it is published
-     * @param transitive      whether its own dependencies are wanted too
-     * @param processorExtras what the Mixin annotation processor needs beside it on that version
-     */
-    public record MixinProvider(String modId, String dependency, String repository, boolean transitive,
-                                List<String> processorExtras) {}
-
     public final String version;
     /** Task, configuration and publication prefix, matching Compat's stubs project names: mc1710. */
     public final String id;
@@ -81,12 +58,10 @@ public enum MinecraftTarget {
     public final String mappingVersion;
     /** Loom only: RFG fixes the Forge version per Minecraft version. */
     public final String forgeVersion;
-    /** Null where Forge provides Mixin. */
-    public final MixinProvider mixinProvider;
 
     MinecraftTarget(String version, Toolchain toolchain, Loader loader, String loaderVersion, String forgeRange,
                     String minecraftRange, int packFormat, String mappingChannel, String mappingVersion,
-                    String forgeVersion, MixinProvider mixinProvider) {
+                    String forgeVersion) {
         this.version = version;
         this.id = "mc" + version.replace(".", "");
         this.toolchain = toolchain;
@@ -98,7 +73,6 @@ public enum MinecraftTarget {
         this.mappingChannel = mappingChannel;
         this.mappingVersion = mappingVersion;
         this.forgeVersion = forgeVersion;
-        this.mixinProvider = mixinProvider;
     }
 
     /** The metadata files this version reads, by path inside the jar. */

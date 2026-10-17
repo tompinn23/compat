@@ -1,6 +1,6 @@
-// Compat Core's common project: the API and framework every Minecraft version shares, Java 21 with no
-// Minecraft or Forge. Embedded in each version's jar and published as compatcore-common, which mods
-// built on Compat Core compile against.
+// Compat's API: what mods compile against, Java 21 with no Minecraft or Forge. Each version's stubs
+// project implements it and embeds it; linking replaces it in every mod, so it never ships. Published
+// as compatcore-common.
 plugins {
     id("org.yonside.compat")
 }

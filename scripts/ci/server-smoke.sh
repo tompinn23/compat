@@ -45,23 +45,7 @@ done
 stop
 
 echo "----- relevant lines from $log -----"
-grep -E "DEVRUN|installed dev-run mods|CompatExample|CompatCore|compatexample|compatcore|ERROR|Exception|Caused by|FAILED" "$log" | grep -vE "DEVRUN .*classpath: .*/(\.gradle/caches|loom-cache)/" | head -n 200
-
-if [ "$result" != pass ]; then
-    echo "----- diagnostics -----"
-    # The mods the dev run installed, and what the example jars contain.
-    ls -la "$module"/run/mods "$module"/run/*/mods 2>/dev/null
-    for jar in "$module"/run/mods/*.jar "$module"/run/*/mods/*.jar "$module"/build/libs/*.jar; do
-        [ -f "$jar" ] || continue
-        echo "== $jar"
-        unzip -l "$jar" | grep -vE "jvmdg/|META-INF/$" | head -n 40
-    done
-    # Loom's dev launch config: the classpath, system properties and mod groups it actually launches with.
-    find "$module" .gradle -path '*loom-cache*' -name 'launch.cfg' 2>/dev/null | while read -r cfg; do
-        echo "== $cfg"
-        cat "$cfg"
-    done
-fi
+grep -E "CompatExample|compatexample|ERROR|Exception|Caused by|FAILED" "$log" | head -n 200
 
 case "$result" in
     pass) echo "SMOKE PASS: $name" ;;

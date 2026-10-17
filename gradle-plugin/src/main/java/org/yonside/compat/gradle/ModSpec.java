@@ -25,12 +25,6 @@ public record ModSpec(
     List<Dependency> dependencies
 ) implements Serializable {
 
-    /**
-     * Compat's artifact prefix (compatcore-common, compatcore-1.7.10, ...). Once a mod id, and still
-     * reserved as one, though Compat no longer ships a mod: it is linked into each mod.
-     */
-    public static final String COMPAT_CORE = "compatcore";
-
     public record Dependency(String modId, String versionRange, boolean mandatory, String ordering, String side,
                              Set<MinecraftTarget> targets) implements Serializable {
 

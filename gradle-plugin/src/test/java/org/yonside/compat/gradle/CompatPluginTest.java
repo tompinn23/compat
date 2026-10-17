@@ -93,12 +93,12 @@ class CompatPluginTest {
         assertNotNull(project.getConfigurations().findByName(CommonSetup.COMMON_ELEMENTS));
         assertNotNull(project.getExtensions().getByType(PublishingExtension.class).getPublications()
             .withType(MavenPublication.class).findByName(PlatformSetup.PUBLICATION));
-        assertEquals("org/yonside/test/fixturemod/jvmdg/", withGroup(project, compat));
+        assertEquals("org/yonside/test/fixturemod/compat/", withGroup(project, compat));
     }
 
     private static String withGroup(Project project, CompatExtension compat) {
         project.setGroup("org.yonside.test");
-        return compat.getShadePath().get();
+        return compat.getLinkPath().get();
     }
 
     @Test
@@ -107,7 +107,7 @@ class CompatPluginTest {
         CompatExtension common = compat(root);
         common.common();
         assertTrue(assertThrows(GradleException.class, () -> common.minecraft("1.7.10")).getMessage().contains("already a common project"));
-        assertTrue(assertThrows(GradleException.class, () -> common.mixins()).getMessage().contains("needs compat.minecraft"));
+        assertTrue(assertThrows(GradleException.class, () -> common.lwjgl3ify()).getMessage().contains("needs compat.minecraft"));
 
         CompatExtension other = compat(ProjectBuilder.builder().withName("mc1710").withParent(root).build());
         assertTrue(assertThrows(GradleException.class, () -> other.minecraft("1.99")).getMessage().contains("Unsupported Minecraft version '1.99'"));
