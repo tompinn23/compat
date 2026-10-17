@@ -28,7 +28,7 @@ class LinkerTest {
         "org/yonside/compat/stub/StubFor.java", """
             package org.yonside.compat.stub;
             @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.CLASS)
-            public @interface StubFor { Class<?> api(); Class<?> target(); }
+            public @interface StubFor { Class<?> value(); }
             """,
         "org/yonside/compat/api/CompatWorld.java", """
             package org.yonside.compat.api;
@@ -46,10 +46,12 @@ class LinkerTest {
         "org/yonside/compat/stubs/mc1710/WorldStubs.java", """
             package org.yonside.compat.stubs.mc1710;
             import net.minecraft.world.World;
-            @org.yonside.compat.stub.StubFor(api = org.yonside.compat.api.CompatWorld.class, target = World.class)
-            public final class WorldStubs {
-                public static boolean isClientSide(World world) { return world.isRemote; }
-                public static long totalTime(World world) { return world.getTotalWorldTime(); }
+            import org.yonside.compat.api.CompatWorld;
+            @org.yonside.compat.stub.StubFor(CompatWorld.class)
+            public record WorldStubs(World world) implements CompatWorld {
+                @Override public boolean isClientSide() { return world.isRemote; }
+                // Calls its own method and reads the component through the accessor: both unwrapped.
+                @Override public long totalTime() { return isClientSide() ? -1 : world().getTotalWorldTime(); }
             }
             """,
         "net/minecraft/world/World.java", """
@@ -127,25 +129,55 @@ class LinkerTest {
     }
 
     @Test
-    void missingStubNamesTheCallAndTheFix() throws Exception {
-        Map<String, String> sources = withMod("""
-            package com.example;
-            public class FixtureMod { public static String name(org.yonside.compat.api.CompatWorld w) { return w.toString(); } }
-            """);
+    void theCompilerChecksWrappersImplementTheWholeApi() throws Exception {
+        Map<String, String> sources = withMod(MOD);
         sources.put("org/yonside/compat/api/CompatWorld.java", """
             package org.yonside.compat.api;
             public interface CompatWorld { boolean isClientSide(); long totalTime(); String name(); }
             """);
-        sources.put("com/example/FixtureMod.java", """
+        assertFalse(Fixtures.compiles(dir, "incomplete", sources), "a wrapper missing name() must not compile");
+    }
+
+    @Test
+    void wrappersMayNotExistAtRuntime() throws Exception {
+        Map<String, String> sources = withMod(MOD);
+        sources.put("org/yonside/compat/stubs/mc1710/WorldStubs.java", """
+            package org.yonside.compat.stubs.mc1710;
+            import net.minecraft.world.World;
+            import org.yonside.compat.api.CompatWorld;
+            @org.yonside.compat.stub.StubFor(CompatWorld.class)
+            public record WorldStubs(World world) implements CompatWorld {
+                @Override public boolean isClientSide() { return world.isRemote; }
+                @Override public long totalTime() { return new WorldStubs(world).isClientSide() ? 0 : 1; }
+            }
+            """);
+        Path compiled = Fixtures.compileOnly(dir, "constructs", sources);
+        GradleException e = assertThrows(GradleException.class,
+            () -> Linker.load(List.of(compiled.toFile()), "com/example/compat/", "1.7.10"));
+        assertTrue(e.getMessage().contains("WorldStubs.totalTime"), e.getMessage());
+    }
+
+    @Test
+    void anApiMethodWithoutAStubFailsTheLink() throws Exception {
+        // A stubs jar built before the API gained a method: the wrapper compiled then, the mod calls it now.
+        Map<String, String> sources = withMod("""
             package com.example;
             public class FixtureMod { public static String name(org.yonside.compat.api.CompatWorld w) { return w.name(); } }
             """);
-        Path compiled = Fixtures.compileOnly(dir, "missing", sources);
-        Linker linker = Linker.load(List.of(compiled.toFile()), "com/example/compat/", "1.7.10");
-        GradleException e = assertThrows(GradleException.class, () -> linker.link(classes(compiled, "com/example/")));
+        Path stubs = Fixtures.compileOnly(dir, "stubs", sources.entrySet().stream()
+            .filter(e -> !e.getKey().startsWith("com/")).collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+        sources.put("org/yonside/compat/api/CompatWorld.java", """
+            package org.yonside.compat.api;
+            public interface CompatWorld { boolean isClientSide(); long totalTime(); String name(); }
+            """);
+        sources.keySet().removeIf(path -> path.contains("/stubs/"));
+        Path mod = Fixtures.compileOnly(dir, "mod", sources);
+
+        Linker linker = Linker.load(List.of(stubs.toFile()), "com/example/compat/", "1.7.10");
+        GradleException e = assertThrows(GradleException.class, () -> linker.link(classes(mod, "com/example/")));
         assertTrue(e.getMessage().contains("org.yonside.compat.api.CompatWorld.name()Ljava/lang/String;, called from"
             + " com.example.FixtureMod.name, has no stub for Minecraft 1.7.10"), e.getMessage());
-        assertTrue(e.getMessage().contains("needs a public static name taking net.minecraft.world.World first"), e.getMessage());
+        assertTrue(e.getMessage().contains("Implement it in the @StubFor(CompatWorld.class) wrapper"), e.getMessage());
     }
 
     private static Map<String, String> withMod(String mod) {

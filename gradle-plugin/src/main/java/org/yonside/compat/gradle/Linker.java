@@ -6,10 +6,13 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -27,16 +30,18 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.tree.MethodNode;
 
 /**
  * Links a mod's classes against one Minecraft version's Compat stubs, the way JvmDowngrader links code
  * against its Java API stubs:
  * <ul>
- *   <li>each API interface with a {@code @StubFor} class becomes that class's target type, e.g.
+ *   <li>each API interface with a {@code @StubFor} wrapper (see {@link StubWrapper}) becomes the type it
+ *       wraps, e.g.
  *       {@code CompatWorld} becomes {@code net/minecraft/world/World}, in every descriptor, signature,
  *       cast and {@code instanceof};</li>
- *   <li>each call to such an interface's method becomes a static call to the stub method of the same
- *       name taking the target type first;</li>
+ *   <li>each call to such an interface's method becomes a static call to the unwrapped wrapper's method
+ *       of the same name, which takes the wrapped type first;</li>
  *   <li>every other library class the mod reaches (stubs, API value types like {@code Pos}, the
  *       {@code CompatAddon} interface) is copied into the output, relocated under the mod's package so no
  *       two mods' copies ever meet.</li>
@@ -71,59 +76,38 @@ final class Linker {
     static Linker load(Iterable<File> libraries, String relocationBase, String minecraft) throws IOException {
         Linker linker = new Linker(relocationBase, minecraft);
         readClasses(libraries, linker.library);
+        // Unwrap every @StubFor wrapper first, so the whole type map is known before stub methods are
+        // keyed by their (mapped) descriptors.
+        List<StubWrapper.Unwrapped> wrappers = new ArrayList<>();
         for (byte[] bytes : linker.library.values()) {
-            linker.indexStubs(bytes);
+            StubWrapper.Unwrapped unwrapped = StubWrapper.unwrap(bytes);
+            if (unwrapped != null) {
+                wrappers.add(unwrapped);
+                String previous = linker.typeMap.put(unwrapped.api(), unwrapped.target());
+                if (previous != null) {
+                    throw new GradleException("Two @StubFor wrappers implement " + unwrapped.api().replace('/', '.'));
+                }
+            }
+        }
+        for (StubWrapper.Unwrapped unwrapped : wrappers) {
+            linker.library.put(unwrapped.node().name, StubWrapper.bytes(unwrapped.node()));
+            linker.index(unwrapped);
         }
         return linker;
     }
 
-    private void indexStubs(byte[] bytes) {
-        String[] apiAndTarget = new String[2];
-        ClassReader reader = new ClassReader(bytes);
-        reader.accept(new ClassVisitor(Opcodes.ASM9) {
-            @Override
-            public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
-                if (!descriptor.equals(STUB_FOR)) {
-                    return null;
-                }
-                return new AnnotationVisitor(Opcodes.ASM9) {
-                    @Override
-                    public void visit(String name, Object value) {
-                        if (name.equals("api")) {
-                            apiAndTarget[0] = ((Type) value).getInternalName();
-                        } else if (name.equals("target")) {
-                            apiAndTarget[1] = ((Type) value).getInternalName();
-                        }
-                    }
-                };
+    private void index(StubWrapper.Unwrapped unwrapped) {
+        for (MethodNode method : unwrapped.node().methods) {
+            Type[] args = Type.getArgumentTypes(method.desc);
+            if ((method.access & Opcodes.ACC_STATIC) == 0 || (method.access & Opcodes.ACC_PUBLIC) == 0 || args.length == 0
+                    || args[0].getSort() != Type.OBJECT || !args[0].getInternalName().equals(unwrapped.target())) {
+                continue;
             }
-        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        if (apiAndTarget[0] == null) {
-            return;
+            Type[] rest = Arrays.copyOfRange(args, 1, args.length);
+            String key = unwrapped.api() + "." + method.name
+                + mapDescriptor(Type.getMethodDescriptor(Type.getReturnType(method.desc), rest));
+            stubs.put(key, new Stub(unwrapped.node().name, method.name, method.desc));
         }
-        // Not "api": inside the ClassVisitor below that would be ASM's own api field.
-        String apiType = apiAndTarget[0];
-        String target = apiAndTarget[1];
-        String previous = typeMap.put(apiType, target);
-        if (previous != null && !previous.equals(target)) {
-            throw new GradleException("Two @StubFor classes map " + apiType + ", to " + previous + " and " + target);
-        }
-        String owner = reader.getClassName();
-        reader.accept(new ClassVisitor(Opcodes.ASM9) {
-            @Override
-            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                Type[] args = Type.getArgumentTypes(descriptor);
-                boolean stub = (access & Opcodes.ACC_STATIC) != 0 && (access & Opcodes.ACC_PUBLIC) != 0
-                    && args.length > 0 && args[0].getSort() == Type.OBJECT && args[0].getInternalName().equals(target);
-                if (stub) {
-                    Type[] rest = new Type[args.length - 1];
-                    System.arraycopy(args, 1, rest, 0, rest.length);
-                    String key = apiType + "." + name + Type.getMethodDescriptor(Type.getReturnType(descriptor), rest);
-                    stubs.put(key, new Stub(owner, name, descriptor));
-                }
-                return null;
-            }
-        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
     }
 
     /** The API types this linker replaces, to their Minecraft types. */
@@ -244,8 +228,8 @@ final class Linker {
             if (stub == null) {
                 throw new GradleException(api.replace('/', '.') + "." + name + descriptor + ", called from "
                     + className.replace('/', '.') + "." + caller + ", has no stub for Minecraft " + minecraft
-                    + ". Its @StubFor(api = " + api.substring(api.lastIndexOf('/') + 1) + ".class) class needs a"
-                    + " public static " + name + " taking " + typeMap.get(api).replace('/', '.') + " first.");
+                    + ". Implement it in the @StubFor(" + api.substring(api.lastIndexOf('/') + 1) + ".class) wrapper"
+                    + " for that version.");
             }
             return stub;
         }

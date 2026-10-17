@@ -20,6 +20,7 @@ version = rootProperties.getProperty("mod_version")
 dependencies {
     implementation("org.ow2.asm:asm:9.9")
     implementation("org.ow2.asm:asm-commons:9.9")
+    implementation("org.ow2.asm:asm-tree:9.9")
     // Through their plugin markers, which resolve to the plugin jars and their dependencies.
     implementation("com.gtnewhorizons.retrofuturagradle:com.gtnewhorizons.retrofuturagradle.gradle.plugin:2.0.6")
     implementation("dev.architectury.loom:dev.architectury.loom.gradle.plugin:1.17-SNAPSHOT")

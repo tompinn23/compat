@@ -43,7 +43,17 @@ final class Fixtures {
         return compile(dir, name, Map.of(), sources);
     }
 
+    /** Whether exactly {@code sources} compile. */
+    static boolean compiles(Path dir, String name, Map<String, String> sources) throws IOException {
+        return javac(dir, name, Map.of(), sources) == 0;
+    }
+
     private static Path compile(Path dir, String name, Map<String, String> base, Map<String, String> sources) throws IOException {
+        assertTrue(javac(dir, name, base, sources) == 0, "fixture compiles");
+        return dir.resolve(name);
+    }
+
+    private static int javac(Path dir, String name, Map<String, String> base, Map<String, String> sources) throws IOException {
         Path src = dir.resolve(name + "-src");
         Path out = dir.resolve(name);
         Files.createDirectories(out);
@@ -57,8 +67,7 @@ final class Fixtures {
             }
         }
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertTrue(compiler.run(null, null, null, args.toArray(String[]::new)) == 0, "fixture compiles");
-        return out;
+        return compiler.run(null, null, null, args.toArray(String[]::new));
     }
 
     /** Packs a class directory into a jar, the way a common project's jar reaches a version project. */
