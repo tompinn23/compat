@@ -1,4 +1,8 @@
 pluginManagement {
+    // org.yonside.compat, built from source.
+    includeBuild("gradle-plugin")
+
+    // For the compat plugin's own dependencies: RetroFuturaGradle, Architectury Loom and theirs.
     repositories {
         maven("https://nexus.gtnewhorizons.com/repository/public/") {
             name = "GTNH"
@@ -9,14 +13,6 @@ pluginManagement {
         maven("https://maven.minecraftforge.net/") { name = "Forge" }
         gradlePluginPortal()
         mavenCentral()
-    }
-
-    // Plugins are applied per subproject so RFG and Loom get separate classloaders.
-    // Never apply them (or JvmDowngrader) in the root project or add them to buildSrc.
-    plugins {
-        id("com.gtnewhorizons.retrofuturagradle") version "2.0.6"
-        id("dev.architectury.loom") version "1.17-SNAPSHOT"
-        id("xyz.wagyourtail.jvmdowngrader") version "1.3.6"
     }
 }
 
@@ -31,6 +27,7 @@ include(":mc1710")
 include(":mc1122")
 include(":mc1165")
 
+// The example mod: all its code in example/common, one build-script-only project per version.
 include(":example:common")
 include(":example:mc1710")
 include(":example:mc1122")

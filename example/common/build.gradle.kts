@@ -1,29 +1,35 @@
+// The example mod's entire code: Java 21, no Minecraft or Forge imports. ExampleMod is annotated
+// @CompatMod, so each version project (example/mc1710 and so on, build scripts only) gets a generated
+// @Mod class that drives it, plus generated mcmod.info / mods.toml.
+//
+// Not published. Compat Core's dev runs install the example's jars, so a dev run boots the framework
+// with a real mod on it.
 plugins {
-    `java-library`
+    id("org.yonside.compat")
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+compat {
+    common()
+    mod {
+        modId = "compatexample"
+        displayName = "Compat Example"
+        description = "Example mod built on Compat Core"
+        license = property("mod_license") as String
+        requires("compatcore") {
+            versionRange = "[${project.version},)"
+        }
     }
 }
 
+repositories {
+    mavenCentral()
+}
+
 dependencies {
-    // The Java 8 view of the API. Compat Core supplies the real classes at runtime, so compile-only.
-    compileOnly(project(path = ":core", configuration = "api8Elements"))
-}
-
-// Java 8 bytecode and Java 8 APIs only: the platform modules that shade this in run on a Java 8
-// toolchain, and unlike Compat Core the example does not run JvmDowngrader.
-tasks.compileJava {
-    options.release = 8
-}
-
-val embedElements = configurations.create("embedElements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-
-artifacts {
-    add(embedElements.name, tasks.jar)
+    // Compat Core's API, also on every version project's classpath through compileOnlyApi. Compat Core
+    // supplies it at runtime. A mod outside this build would use org.yonside.compat:compatcore-common.
+    // By configuration name, like the version projects' own dependency on their common project.
+    compileOnlyApi(project(path = ":core", configuration = "compatCommon"))
+    // 1.7.10's log4j, the oldest of the three, so only API every version has gets used.
+    compileOnly("org.apache.logging.log4j:log4j-api:2.0-beta9")
 }
