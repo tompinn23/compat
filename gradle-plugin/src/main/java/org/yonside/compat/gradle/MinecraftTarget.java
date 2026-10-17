@@ -67,7 +67,7 @@ public enum MinecraftTarget {
                                 List<String> processorExtras) {}
 
     public final String version;
-    /** Task, configuration and publication prefix, matching Compat Core's project names: mc1710. */
+    /** Task, configuration and publication prefix, matching Compat's stubs project names: mc1710. */
     public final String id;
     public final Toolchain toolchain;
     public final Loader loader;

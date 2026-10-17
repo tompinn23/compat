@@ -14,6 +14,7 @@ import kotlin.jvm.functions.Function1;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.attributes.Usage;
 import org.gradle.api.file.DuplicatesStrategy;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RegularFile;
@@ -46,8 +47,11 @@ import xyz.wagyourtail.jvmdg.gradle.task.ShadeJar;
  * <p>The jars, for e.g. 1.7.10 and mod id {@code mymod}:
  * <pre>
  * compileJava (21) + compatEmbed (common jar) + compileCompatModJava (generated @Mod, 21)
- *   → jar                     mymod-1.7.10-&lt;v&gt;-dev.jar       dev names, Java 21: what other mods compile against
- *       ├→ reobf / remap      mymod-1.7.10-&lt;v&gt;-java21.jar    production names, Java 21
+ *   → jar                       mymod-1.7.10-&lt;v&gt;-unlinked.jar  still calls Compat's API
+ *   → linkCompat (+ compatStubs, Compat's 1.7.10 stubs): API types become Minecraft's, API calls become
+ *     stub calls, and the stubs and API classes used are copied in under compat.linkPath
+ *   → compatDevJar              mymod-1.7.10-&lt;v&gt;-dev.jar       dev names, Java 21, self-contained
+ *       ├→ reobf / remap        mymod-1.7.10-&lt;v&gt;-java21.jar    production names, Java 21
  *       └→ downgradeJar → shadeDowngradedApi                  dev names, Java 8: dev runs
  *              └→ reobf / remap  mymod-1.7.10-&lt;v&gt;.jar      production names, Java 8: what players install
  * </pre>
@@ -66,13 +70,22 @@ final class PlatformSetup {
     /** Consumable: the Java 8 release jar. */
     static final String RELEASE_ELEMENTS = "compatRelease";
     static final String EMBED = "compatEmbed";
+    /** Resolvable, in mod projects: the version's stub jar to link against. */
+    static final String STUBS = "compatStubs";
+    /** Consumable, in stubs projects: the stub jar. */
+    static final String STUB_ELEMENTS = "compatStubElements";
+    /** The linked Java 21 dev-name jar task. */
+    static final String DEV_JAR = "compatDevJar";
 
     /** The release jars a toolchain produces from the dev jars. */
     record ReleaseJars(TaskProvider<? extends AbstractArchiveTask> release, TaskProvider<? extends AbstractArchiveTask> java21) {}
 
     private PlatformSetup() {}
 
-    static void apply(Project project, CompatExtension ext, Project common) {
+    /** What both kinds of version project share: the toolchain, Java 21 and the embedded common jar. */
+    private record Base(SourceSet main, Configuration embed, JavaToolchainService toolchains, TaskProvider<Jar> jar) {}
+
+    private static Base applyBase(Project project, CompatExtension ext, Project common) {
         MinecraftTarget target = ext.getTarget();
         switch (target.toolchain) {
             case RFG -> RfgSetup.applyToolchain(project, ext);
@@ -105,6 +118,64 @@ final class PlatformSetup {
         project.getDependencies().add(EMBED, project.getDependencies().project(commonElements));
         project.getDependencies().add(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, project.getDependencies().project(commonElements));
 
+        TaskProvider<Jar> jar = project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, task -> {
+            task.dependsOn(embed);
+            task.from(embed.getElements().map(jars -> jars.stream().map(project::zipTree).collect(Collectors.toList())), copySpec ->
+                copySpec.exclude("META-INF/MANIFEST.MF", "META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA"));
+            task.setDuplicatesStrategy(DuplicatesStrategy.EXCLUDE);
+        });
+        return new Base(main, embed, toolchains, jar);
+    }
+
+    /**
+     * {@code compat { stubs("x") }}: the API implemented against one Minecraft version, published as one
+     * dev-name Java 21 jar (with the API embedded) that mods are linked against. Not a mod: nothing here
+     * is downgraded, remapped or run.
+     */
+    static void applyStubs(Project project, CompatExtension ext, Project common) {
+        Base base = applyBase(project, ext, common);
+        MinecraftTarget target = ext.getTarget();
+        base.jar().configure(task -> task.getArchiveClassifier().set(""));
+        // RFG and Loom still build their production-name copy; keep it out of the way.
+        project.getTasks().matching(t -> t.getName().equals("reobfJar") || t.getName().equals("remapJar"))
+            .configureEach(t -> ((AbstractArchiveTask) t).getArchiveClassifier().set("srg"));
+
+        Configuration elements = project.getConfigurations().create(STUB_ELEMENTS, c -> {
+            c.setCanBeConsumed(true);
+            c.setCanBeResolved(false);
+            c.setDescription("Compat's Minecraft " + target.version + " stubs with the API, for linking mods.");
+            stubAttributes(project, c);
+        });
+        project.getArtifacts().add(elements.getName(), base.jar());
+
+        ModInfo mod = ext.getMod();
+        PublishingExtension publishing = project.getExtensions().getByType(PublishingExtension.class);
+        MavenPublication publication = publishing.getPublications().create(PUBLICATION, MavenPublication.class, pub -> {
+            pub.artifact(base.jar());
+            pub.artifact(project.getTasks().named("sourcesJar", Jar.class));
+            describe(pub, mod, " stubs for Minecraft " + target.version);
+        });
+        project.afterEvaluate(p -> publication.setArtifactId(mod.getModId().get() + "-" + target.version));
+    }
+
+    /** Selects a stubs project's {@link #STUB_ELEMENTS}, or a published stub jar's runtime variant. */
+    private static void stubAttributes(Project project, Configuration configuration) {
+        configuration.getAttributes().attribute(CompatPlugin.VARIANT, STUB_ELEMENTS);
+        configuration.getAttributes().attribute(Usage.USAGE_ATTRIBUTE, project.getObjects().named(Usage.class, Usage.JAVA_RUNTIME));
+    }
+
+    /**
+     * {@code compat { minecraft("x") }}: a mod for one Minecraft version. See the class comment for its
+     * jars.
+     */
+    static void apply(Project project, CompatExtension ext, Project common) {
+        Base base = applyBase(project, ext, common);
+        MinecraftTarget target = ext.getTarget();
+        SourceSet main = base.main();
+        Configuration embed = base.embed();
+        JavaToolchainService toolchains = base.toolchains();
+        ModInfo mod = ext.getMod();
+
         // Generated @Mod sources (only if the author wrote none) and metadata (each file only if absent).
         Provider<ModSpec> spec = project.provider(() -> ModSpec.of(mod, ext.inheritedMod()));
         TaskProvider<GenerateModMetadata> metadata = project.getTasks().register("generateCompatMetadata", GenerateModMetadata.class, task -> {
@@ -134,17 +205,46 @@ final class PlatformSetup {
             java21(task, toolchains);
         });
 
-        TaskProvider<Jar> jar = project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, task -> {
-            task.getArchiveClassifier().set("dev");
+        // The unlinked jar: the mod's classes, its common jar and the generated @Mod class, all still
+        // calling Compat's API. Linking it against the version's stubs gives the dev jar.
+        TaskProvider<Jar> jar = base.jar();
+        jar.configure(task -> {
+            task.getArchiveClassifier().set("unlinked");
             task.from(compileGenerated.flatMap(JavaCompile::getDestinationDirectory));
-            task.dependsOn(embed);
-            task.from(embed.getElements().map(jars -> jars.stream().map(project::zipTree).collect(Collectors.toList())), copySpec ->
-                copySpec.exclude("META-INF/MANIFEST.MF", "META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA"));
-            task.setDuplicatesStrategy(DuplicatesStrategy.EXCLUDE);
+        });
+
+        Configuration stubs = project.getConfigurations().create(STUBS, c -> {
+            c.setCanBeConsumed(false);
+            c.setCanBeResolved(true);
+            c.setTransitive(false);
+            c.setDescription("Compat's Minecraft " + target.version + " stubs, which this mod is linked against.");
+            stubAttributes(project, c);
+            c.defaultDependencies(deps -> deps.add(project.getDependencies().create(
+                CompatPlugin.GROUP + ":" + ModSpec.COMPAT_CORE + "-" + target.version + ":" + CompatPlugin.version())));
+        });
+        TaskProvider<LinkCompatClasses> link = project.getTasks().register("linkCompat", LinkCompatClasses.class, task -> {
+            task.setDescription("Links the mod against Compat's Minecraft " + target.version + " stubs.");
+            task.getInput().set(jar.flatMap(Jar::getArchiveFile));
+            task.getStubs().from(stubs);
+            task.getRelocationBase().set(ext.getLinkPath());
+            task.getMinecraft().set(target.version);
+            task.getOutputDirectory().set(project.getLayout().getBuildDirectory().dir("classes/compat/linked"));
+        });
+        // The dev jar: linked classes plus everything else the unlinked jar holds, and its manifest.
+        TaskProvider<Jar> devJar = project.getTasks().register(DEV_JAR, Jar.class, task -> {
+            task.setDescription("Assembles the linked Java 21 dev-name jar.");
+            task.getArchiveClassifier().set("dev");
+            task.from(link.flatMap(LinkCompatClasses::getOutputDirectory));
+            task.from(jar.flatMap(Jar::getArchiveFile).map(project::zipTree), copySpec ->
+                copySpec.exclude("**/*.class", "META-INF/MANIFEST.MF"));
+            task.doFirst(t -> task.getManifest().attributes(jar.get().getManifest().getAttributes()));
         });
 
         // Java 8 jars in dev names, still referencing JvmDowngrader's stubs, then with them bundled.
-        project.getTasks().named("downgradeJar", DowngradeJar.class, task -> task.getArchiveClassifier().set("dev-downgraded"));
+        project.getTasks().named("downgradeJar", DowngradeJar.class, task -> {
+            task.getInputFile().set(devJar.flatMap(Jar::getArchiveFile));
+            task.getArchiveClassifier().set("dev-downgraded");
+        });
         Provider<String> shadePath = ext.getShadePath();
         TaskProvider<ShadeJar> shade = project.getTasks().named("shadeDowngradedApi", ShadeJar.class, task -> {
             task.getArchiveClassifier().set("dev-shaded");
@@ -155,12 +255,12 @@ final class PlatformSetup {
         });
 
         ReleaseJars release = switch (target.toolchain) {
-            case RFG -> RfgSetup.configureJars(project, ext, jar, shade, embed);
-            case LOOM -> LoomSetup.configureJars(project, ext, jar, shade, embed);
+            case RFG -> RfgSetup.configureJars(project, ext, jar, devJar, shade, embed);
+            case LOOM -> LoomSetup.configureJars(project, ext, jar, devJar, shade, embed);
         };
         project.getTasks().named(LifecycleBasePlugin.ASSEMBLE_TASK_NAME).configure(task -> task.dependsOn(release.release(), release.java21()));
 
-        consumable(project, DEV_ELEMENTS, jar);
+        consumable(project, DEV_ELEMENTS, devJar);
         consumable(project, DEV_MOD_ELEMENTS, shade);
         consumable(project, RELEASE_ELEMENTS, release.release());
         configureDevRuns(project);
@@ -170,7 +270,7 @@ final class PlatformSetup {
             // Artifacts only: the POM never lists Minecraft, Forge or other mods as Maven dependencies.
             pub.artifact(release.release());                              // Java 8, what players install
             pub.artifact(release.java21());                               // -java21
-            pub.artifact(jar);                                            // -dev, what other mods compile against
+            pub.artifact(devJar);                                         // -dev, linked: what other mods compile against
             pub.artifact(project.getTasks().named("sourcesJar", Jar.class));  // -sources
             describe(pub, mod, " for Minecraft " + target.version);
         });

@@ -19,8 +19,7 @@ public abstract class ModDependency implements Named {
     public ModDependency(String name) {
         this.name = name;
         getMandatory().convention(true);
-        // Compat Core must be set up before anything built on it.
-        getOrdering().convention(name.equals(ModSpec.COMPAT_CORE) ? "AFTER" : "NONE");
+        getOrdering().convention("NONE");
         getSide().convention("BOTH");
     }
 

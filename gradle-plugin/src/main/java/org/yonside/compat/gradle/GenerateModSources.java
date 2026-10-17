@@ -28,7 +28,7 @@ import org.objectweb.asm.Opcodes;
 /**
  * Generates the source of a {@code @Mod} class and event listener (see {@link ModSourceGenerator}) for
  * the one class annotated {@code @CompatMod}. Generates nothing when the classes already contain a
- * {@code @Mod} class -- Compat Core's hand-written ones, or any mod author's -- or when no class is
+ * {@code @Mod} class -- a mod author's own -- or when no class is
  * annotated.
  */
 @CacheableTask

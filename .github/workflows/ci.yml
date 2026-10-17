@@ -83,8 +83,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # <module>[:<task>]; mc1710:runServer21 is 1.7.10 on Java 21 with lwjgl3ify.
-        run: [mc1710, mc1122, mc1165, "mc1710:runServer21"]
+        # <project dir>[:<task>]; example/mc1710:runServer21 is 1.7.10 on Java 21 with lwjgl3ify.
+        run: [example/mc1710, example/mc1122, example/mc1165, "example/mc1710:runServer21"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDKs 8 (Azul, for RFG), 25 (Gradle daemon) and 21 (sources)
@@ -111,10 +111,10 @@ jobs:
           name: smoke-${{ strategy.job-index }}
           path: |
             build/smoke-*.log
-            mc*/run/logs/
-            mc*/run/crash-reports/
-            mc*/run/**/logs/
-            mc*/run/**/crash-reports/
+            example/*/run/logs/
+            example/*/run/crash-reports/
+            example/*/run/**/logs/
+            example/*/run/**/crash-reports/
 
   publish:
     name: Publish to maven.yonside.org

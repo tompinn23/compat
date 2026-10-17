@@ -31,7 +31,7 @@ final class CommonSetup {
             .set(mod.getModId().map(modId -> modId + "-common").orElse(project.getName()));
 
         // Selected by name, so Gradle's JVM-version matching never rejects it from a Java 8 project. Carries
-        // api and compileOnlyApi dependencies (e.g. Compat Core's API, for an addon) to the version projects'
+        // api and compileOnlyApi dependencies (e.g. Compat's API) to the version projects'
         // compile classpath; they embed only this project's own jar.
         Configuration elements = project.getConfigurations().create(COMMON_ELEMENTS, c -> {
             c.setCanBeConsumed(true);

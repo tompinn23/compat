@@ -63,7 +63,8 @@ final class LoomSetup {
     }
 
     static PlatformSetup.ReleaseJars configureJars(Project project, CompatExtension ext, TaskProvider<Jar> jar,
-                                                   TaskProvider<ShadeJar> shade, Configuration embed) {
+                                                   TaskProvider<Jar> linkedJar, TaskProvider<ShadeJar> shade,
+                                                   Configuration embed) {
         configureDevRuns(project, ext.getMod().getModId().get(), shade, embed);
 
         TaskProvider<RemapJarTask> remapJar = project.getTasks().named("remapJar", RemapJarTask.class, task -> {
@@ -72,8 +73,8 @@ final class LoomSetup {
             task.getInputFile().set(shade.flatMap(Jar::getArchiveFile));
         });
         TaskProvider<RemapJarTask> remapJava21 = project.getTasks().register("remapJava21Jar", RemapJarTask.class, task -> {
-            task.dependsOn(jar);
-            task.getInputFile().set(jar.flatMap(Jar::getArchiveFile));
+            task.dependsOn(linkedJar);
+            task.getInputFile().set(linkedJar.flatMap(Jar::getArchiveFile));
             task.getArchiveClassifier().set("java21");
         });
         return new PlatformSetup.ReleaseJars(remapJar, remapJava21);

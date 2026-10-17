@@ -21,6 +21,8 @@ import org.gradle.api.file.RegularFile;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.JavaExec;
+import org.gradle.api.tasks.SourceSet;
+import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.bundling.Jar;
 import org.gradle.jvm.toolchain.JavaLanguageVersion;
@@ -86,17 +88,26 @@ final class RfgSetup {
     }
 
     static PlatformSetup.ReleaseJars configureJars(Project project, CompatExtension ext, TaskProvider<Jar> jar,
-                                                   TaskProvider<ShadeJar> shade, Configuration embed) {
+                                                   TaskProvider<Jar> linkedJar, TaskProvider<ShadeJar> shade,
+                                                   Configuration embed) {
+        // RFG reobfuscates the unlinked jar too; it carries the Mixin mappings the others reuse.
         TaskProvider<ReobfuscatedJar> reobfJar = project.getTasks().named("reobfJar", ReobfuscatedJar.class,
-            task -> task.getArchiveClassifier().set("java21"));
-        // Created by RFG's reobf<JarTask> rule.
+            task -> task.getArchiveClassifier().set("unlinked-srg"));
+        // Both created by RFG's reobf<JarTask> rule.
+        TaskProvider<ReobfuscatedJar> reobfLinked = project.getTasks().named(
+            "reobf" + Character.toUpperCase(PlatformSetup.DEV_JAR.charAt(0)) + PlatformSetup.DEV_JAR.substring(1),
+            ReobfuscatedJar.class, task -> {
+                task.getArchiveClassifier().set("java21");
+                task.getExtraSrgFiles().from(reobfJar.map(ReobfuscatedJar::getExtraSrgFiles));
+                task.getExtraSrgEntries().addAll(reobfJar.flatMap(ReobfuscatedJar::getExtraSrgEntries));
+            });
         TaskProvider<ReobfuscatedJar> reobfShaded = project.getTasks().named("reobfShadeDowngradedApi", ReobfuscatedJar.class, task -> {
             task.getArchiveClassifier().set("");
             task.getExtraSrgFiles().from(reobfJar.map(ReobfuscatedJar::getExtraSrgFiles));
             task.getExtraSrgEntries().addAll(reobfJar.flatMap(ReobfuscatedJar::getExtraSrgEntries));
         });
 
-        // Dev runs use Java 8, so swap the Java 21 dev jar and embedded common jar for the downgraded jar.
+        // Dev runs use Java 8, so swap the unlinked jar and embedded common jar for the linked, downgraded jar.
         Provider<RegularFile> devJar = jar.flatMap(Jar::getArchiveFile);
         FileCollection embedded = embed;
         for (String run : List.of("runClient", "runServer")) {
@@ -107,7 +118,7 @@ final class RfgSetup {
                     original.filter(file -> !PlatformSetup.isJava21Output(file, devJar, embedded))));
             });
         }
-        return new PlatformSetup.ReleaseJars(reobfShaded, reobfJar);
+        return new PlatformSetup.ReleaseJars(reobfShaded, reobfLinked);
     }
 
     static void enableMixins(Project project, MinecraftTarget target, MixinOptions options) {
@@ -163,9 +174,11 @@ final class RfgSetup {
         MinecraftTasks mcTasks = project.getExtensions().getByType(MinecraftTasks.class);
         MinecraftExtension minecraft = minecraft(project);
         JavaToolchainService toolchains = project.getExtensions().getByType(JavaToolchainService.class);
-        TaskProvider<Jar> jar = project.getTasks().named("jar", Jar.class);
-        // The dev jar embeds the common jar, so leave the common project's own jar off the classpath.
-        FileCollection embedded = project.getConfigurations().getByName(PlatformSetup.EMBED);
+        TaskProvider<Jar> jar = project.getTasks().named(PlatformSetup.DEV_JAR, Jar.class);
+        // The linked dev jar holds the mod, its common jar and the Compat classes it uses: leave the
+        // unlinked versions of all of those off the classpath.
+        SourceSet main = project.getExtensions().getByType(SourceSetContainer.class).getByName(SourceSet.MAIN_SOURCE_SET_NAME);
+        FileCollection embedded = project.files(project.getConfigurations().getByName(PlatformSetup.EMBED), main.getOutput());
         boolean mac = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 
         for (Distribution side : List.of(Distribution.CLIENT, Distribution.DEDICATED_SERVER)) {

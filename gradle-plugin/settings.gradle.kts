@@ -1,5 +1,5 @@
-// Included from the root build's pluginManagement, so Compat Core and the example build with the plugin
-// straight from source. Published alongside Compat Core for other mods.
+// Included from the root build's pluginManagement, so Compat and the example build with the plugin
+// straight from source. Published alongside Compat for other mods.
 rootProject.name = "compat-gradle"
 
 dependencyResolutionManagement {

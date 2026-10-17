@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# Boots one Minecraft version's dedicated dev server with Compat Core and the example addon installed,
+# Boots one Minecraft version's dedicated dev server running the example on its own (Compat is linked in),
 # and passes once the example logs both its init and its world-load lines -- the end-to-end proof that
 # the generated @Mod class loaded, forwarded init, and received WorldEvent.Load as a CompatWorld.
 #
-# Usage: scripts/ci/server-smoke.sh <module>[:<task>], e.g. mc1122, or mc1710:runServer21 for the
-# Java 21 lwjgl3ify run. The task defaults to runServer.
+# Usage: scripts/ci/server-smoke.sh <project dir>[:<task>], e.g. example/mc1122, or
+# example/mc1710:runServer21 for the Java 21 lwjgl3ify run. The task defaults to runServer.
 set -uo pipefail
 
 module="${1%%:*}"
 task="runServer"
 [[ "$1" == *:* ]] && task="${1#*:}"
-name="$module-$task"
+name="${module//\//-}-$task"
+gradle_path=":${module//\//:}"
 timeout_seconds="${SMOKE_TIMEOUT:-1500}"
 log="build/smoke-$name.log"
 mkdir -p build
 
 # A new process group, so the server JVM Gradle forks dies with it.
-setsid ./gradlew --no-daemon --stacktrace ":$module:$task" -Pcompat.acceptEula=true >"$log" 2>&1 &
+setsid ./gradlew --no-daemon --stacktrace "$gradle_path:$task" -Pcompat.acceptEula=true >"$log" 2>&1 &
 gradle_pid=$!
 
 stop() {
@@ -50,15 +51,10 @@ if [ "$result" != pass ]; then
     echo "----- diagnostics -----"
     # The mods the dev run installed, and what the example jars contain.
     ls -la "$module"/run/mods "$module"/run/*/mods 2>/dev/null
-    for jar in "$module"/run/mods/*.jar "$module"/run/*/mods/*.jar example/"$module"/build/libs/*.jar; do
+    for jar in "$module"/run/mods/*.jar "$module"/run/*/mods/*.jar "$module"/build/libs/*.jar; do
         [ -f "$jar" ] || continue
         echo "== $jar"
         unzip -l "$jar" | grep -vE "jvmdg/|META-INF/$" | head -n 40
-    done
-    # Which copies of the mixin classes exist, and which Java version each was compiled for.
-    find "$module" -name 'Mixin*.class' -not -path '*/run/*' | while read -r class; do
-        major=$(od -An -tu1 -j6 -N2 "$class" | awk '{print $1*256+$2}')
-        echo "class major $major: $class"
     done
     # Loom's dev launch config: the classpath, system properties and mod groups it actually launches with.
     find "$module" .gradle -path '*loom-cache*' -name 'launch.cfg' 2>/dev/null | while read -r cfg; do

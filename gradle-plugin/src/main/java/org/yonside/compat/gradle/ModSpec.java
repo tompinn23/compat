@@ -25,7 +25,10 @@ public record ModSpec(
     List<Dependency> dependencies
 ) implements Serializable {
 
-    /** Compat Core's mod id. Every other mod built with this plugin runs on it. */
+    /**
+     * Compat's artifact prefix (compatcore-common, compatcore-1.7.10, ...). Once a mod id, and still
+     * reserved as one, though Compat no longer ships a mod: it is linked into each mod.
+     */
     public static final String COMPAT_CORE = "compatcore";
 
     public record Dependency(String modId, String versionRange, boolean mandatory, String ordering, String side,
@@ -53,10 +56,6 @@ public record ModSpec(
         }
 
         Map<String, Dependency> dependencies = new LinkedHashMap<>();
-        if (!modId.equals(COMPAT_CORE)) {
-            // Every mod built with this plugin runs on Compat Core; a declared requires("compatcore") replaces this.
-            dependencies.put(COMPAT_CORE, new Dependency(COMPAT_CORE, null, true, "AFTER", "BOTH", Set.of()));
-        }
         if (inherited != null) {
             inherited.getRequires().forEach(dep -> dependencies.put(dep.getName(), dependency(dep)));
         }

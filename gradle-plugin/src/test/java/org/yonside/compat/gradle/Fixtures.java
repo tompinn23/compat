@@ -35,11 +35,20 @@ final class Fixtures {
 
     /** Compiles {@code sources} (path to content) plus {@link #API} into {@code out}, returning it. */
     static Path compile(Path dir, String name, Map<String, String> sources) throws IOException {
+        return compile(dir, name, API, sources);
+    }
+
+    /** Compiles exactly {@code sources}. */
+    static Path compileOnly(Path dir, String name, Map<String, String> sources) throws IOException {
+        return compile(dir, name, Map.of(), sources);
+    }
+
+    private static Path compile(Path dir, String name, Map<String, String> base, Map<String, String> sources) throws IOException {
         Path src = dir.resolve(name + "-src");
         Path out = dir.resolve(name);
         Files.createDirectories(out);
         List<String> args = new ArrayList<>(List.of("-d", out.toString(), "-proc:none"));
-        for (Map<String, String> set : List.of(API, sources)) {
+        for (Map<String, String> set : List.of(base, sources)) {
             for (Map.Entry<String, String> source : set.entrySet()) {
                 Path file = src.resolve(source.getKey());
                 Files.createDirectories(file.getParent());

@@ -1,6 +1,6 @@
 import java.util.Properties
 
-// org.yonside.compat: one plugin for Compat Core and every mod built on it. It applies RetroFuturaGradle,
+// org.yonside.compat: one plugin for Compat and every mod built with it. It applies RetroFuturaGradle,
 // Architectury Loom and JvmDowngrader itself, so they are its dependencies; builds using it must not
 // declare other versions of them. RFG is compiled for Java 25, so this build and its users run Gradle on
 // Java 25; the plugin itself targets 21.
@@ -19,6 +19,7 @@ version = rootProperties.getProperty("mod_version")
 
 dependencies {
     implementation("org.ow2.asm:asm:9.9")
+    implementation("org.ow2.asm:asm-commons:9.9")
     // Through their plugin markers, which resolve to the plugin jars and their dependencies.
     implementation("com.gtnewhorizons.retrofuturagradle:com.gtnewhorizons.retrofuturagradle.gradle.plugin:2.0.6")
     implementation("dev.architectury.loom:dev.architectury.loom.gradle.plugin:1.17-SNAPSHOT")
@@ -50,7 +51,7 @@ gradlePlugin {
             id = "org.yonside.compat"
             implementationClass = "org.yonside.compat.gradle.CompatPlugin"
             displayName = "Compat"
-            description = "Builds Compat Core and mods on it: a Java 21 common project plus one project per" +
+            description = "Builds mods with Compat: a Java 21 common project plus one project per" +
                 " Minecraft version, set up with RetroFuturaGradle or Architectury Loom, generating the @Mod class" +
                 " and mcmod.info / mods.toml unless hand-written, and downgrading the release jars to Java 8."
         }
@@ -70,5 +71,14 @@ publishing {
                     .orElse(providers.environmentVariable("YONSIDE_PASSWORD")).orNull
             }
         }
+    }
+}
+
+// Read by CompatPlugin.version(): mods link against the stubs of the plugin's own version by default.
+tasks.processResources {
+    val props = mapOf("version" to project.version.toString())
+    inputs.properties(props)
+    filesMatching("**/compat-plugin.properties") {
+        expand(props)
     }
 }

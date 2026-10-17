@@ -8,11 +8,12 @@ import org.yonside.compat.api.Pos;
 import org.yonside.compat.mte.MachineEvent;
 
 /**
- * The example's behaviour, written once against the Compat Core API. Nothing here imports Minecraft,
- * so the same class file runs on 1.7.10, 1.12.2 and 1.16.5 -- that is the whole point of the framework.
+ * The example's behaviour, written once against Compat's API. Nothing here imports Minecraft; the
+ * compat plugin links this class into each version's jar, with Compat's types and calls replaced by
+ * that version's.
  *
- * <p>Java 21 throughout, like Compat Core itself: the addon plugin downgrades each version's finished jar
- * to Java 8, so the switch over MachineEvent's sealed records below runs on 1.7.10's Java 8 too.
+ * <p>Java 21 throughout: the plugin downgrades each version's finished jar to Java 8, so the switch over
+ * MachineEvent's sealed records below runs on 1.7.10's Java 8 too.
  */
 public final class ExampleMachine {
 
@@ -40,7 +41,7 @@ public final class ExampleMachine {
     /** The whole smoke test: report the world's side, then push a few MachineEvents through. */
     public List<String> report(CompatWorld world) {
         var lines = new ArrayList<String>();
-        lines.add("world is " + describeWorld(world));
+        lines.add("world is " + describeWorld(world) + ", " + world.totalTime() + " ticks old");
         lines.add(accept(new MachineEvent.Tick(++tick)));
         lines.add(accept(new MachineEvent.RedstoneChanged(redstonePower, 15)));
         lines.add(accept(new MachineEvent.NeighborChanged(Pos.offset(pos, 0, 1, 0))));
@@ -59,10 +60,10 @@ public final class ExampleMachine {
     }
 
     /**
-     * Compat Core's mixin injects CompatWorld onto 1.7.10 and 1.12.2's {@code World} and onto 1.16.5's
-     * {@code Level}, and hands addons the world already typed as one: no wrapper, no per-version branch.
+     * After linking, {@code world} is 1.7.10 and 1.12.2's {@code World} or 1.16.5's {@code Level} itself,
+     * and {@code isClientSide()} a static call to that version's stub: no wrapper, no per-version branch.
      */
     public static String describeWorld(CompatWorld world) {
-        return world.compat$isClientSide() ? "client" : "server";
+        return world.isClientSide() ? "client" : "server";
     }
 }

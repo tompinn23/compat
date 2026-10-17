@@ -1,11 +1,17 @@
 package org.yonside.compat.api;
 
 /**
- * Injected onto each version's World class by a mixin, so core code can do {@code (CompatWorld) world}
- * with no wrapper objects. Every method carries the {@code compat$} prefix so it can never collide with
- * a Minecraft method, whichever names (MCP, SRG, official) are in effect.
+ * A Minecraft world, whatever the version calls it. Never implemented at runtime: the compat plugin
+ * links each mod so that this type is the version's world class itself and each method is a static
+ * call to that version's stub (see {@link org.yonside.compat.stub.StubFor}).
+ *
+ * <p>Interfaces the plugin maps this way must only declare abstract methods.
  */
 public interface CompatWorld {
 
-    boolean compat$isClientSide();
+    /** True on the client's copy of the world, false on the server's. */
+    boolean isClientSide();
+
+    /** Ticks since the world was created. */
+    long totalTime();
 }

@@ -34,7 +34,7 @@ public abstract class CompatExtension {
 
     public static final String NAME = "compat";
 
-    enum Role { COMMON, MINECRAFT }
+    enum Role { COMMON, MINECRAFT, STUBS }
 
     private final Project project;
     private final ModInfo mod;
@@ -51,6 +51,8 @@ public abstract class CompatExtension {
         mod.getVersion().convention(project.provider(() -> project.getVersion().toString()));
         getShadePath().convention(mod.getModId().map(modId ->
             project.getGroup().toString().replace('.', '/') + "/" + modId + "/jvmdg/"));
+        getLinkPath().convention(mod.getModId().map(modId ->
+            project.getGroup().toString().replace('.', '/') + "/" + modId + "/compat/"));
     }
 
     /** What the mod loader is told about the mod. Set it in the common project; version projects inherit it. */
@@ -68,6 +70,13 @@ public abstract class CompatExtension {
      */
     public abstract Property<String> getShadePath();
 
+    /**
+     * Where the Compat classes this mod uses (stubs, API value types) are copied into its jar by
+     * linking. Must be unique to the mod. Defaults to the project group as a path, then the mod id, then
+     * {@code compat/}.
+     */
+    public abstract Property<String> getLinkPath();
+
     /** Makes this the mod's common project: Java 21, no Minecraft or Forge, embedded in every version's jar. */
     public void common() {
         claimRole(Role.COMMON, "common()");
@@ -79,8 +88,8 @@ public abstract class CompatExtension {
      * {@code common}. Must come before {@code minecraft(...)}.
      */
     public void commonProject(String path) {
-        if (role == Role.MINECRAFT) {
-            throw new GradleException("compat.commonProject(\"" + path + "\") must come before minecraft(...) in " + project);
+        if (role == Role.MINECRAFT || role == Role.STUBS) {
+            throw new GradleException("compat.commonProject(\"" + path + "\") must come before minecraft(...) or stubs(...) in " + project);
         }
         commonPath = path;
     }
@@ -90,13 +99,27 @@ public abstract class CompatExtension {
      * or Architectury Loom, and builds and publishes the mod's jar for that version.
      */
     public void minecraft(String version) {
+        PlatformSetup.apply(project, this, versionRole(Role.MINECRAFT, "minecraft", version));
+    }
+
+    /**
+     * Makes this Compat's stubs for {@code version}: the API implemented against that version with
+     * {@link org.yonside.compat.stub.StubFor} classes, which mods are linked against. Compat's own
+     * projects only.
+     */
+    public void stubs(String version) {
+        PlatformSetup.applyStubs(project, this, versionRole(Role.STUBS, "stubs", version));
+    }
+
+    /** Claims a version role and returns the common project, evaluated, whose mod {} block this inherits. */
+    private Project versionRole(Role wanted, String call, String version) {
         MinecraftTarget target;
         try {
             target = MinecraftTarget.of(version);
         } catch (IllegalArgumentException e) {
-            throw new GradleException("compat.minecraft: " + e.getMessage());
+            throw new GradleException("compat." + call + ": " + e.getMessage());
         }
-        claimRole(Role.MINECRAFT, "minecraft(\"" + version + "\")");
+        claimRole(wanted, call + "(\"" + version + "\")");
         this.target = target;
         Project commonProject = findCommonProject();
 
@@ -108,7 +131,7 @@ public abstract class CompatExtension {
                 + " and call compat { common() }.");
         }
         mod.inheritFrom(common.mod);
-        PlatformSetup.apply(project, this, commonProject);
+        return commonProject;
     }
 
     /**
@@ -216,7 +239,7 @@ public abstract class CompatExtension {
         Project parent = project.getParent();
         Project sibling = parent == null ? null : parent.getChildProjects().get("common");
         if (sibling == null) {
-            throw new GradleException("compat.minecraft: " + project + " has no sibling project named 'common'."
+            throw new GradleException("compat: " + project + " has no sibling project named 'common'."
                 + " Name its common project with compat.commonProject(\":path\") first.");
         }
         return sibling;
@@ -225,7 +248,11 @@ public abstract class CompatExtension {
     private void claimRole(Role wanted, String call) {
         if (role != null) {
             throw new GradleException("compat." + call + ": " + project + " is already a "
-                + (role == Role.COMMON ? "common project" : "Minecraft " + target.version + " project")
+                + switch (role) {
+                    case COMMON -> "common project";
+                    case MINECRAFT -> "Minecraft " + target.version + " project";
+                    case STUBS -> "Minecraft " + target.version + " stubs project";
+                }
                 + ". Each project has exactly one role.");
         }
         role = wanted;

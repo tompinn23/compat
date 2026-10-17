@@ -10,9 +10,9 @@ plugins {
 }
 
 subprojects {
-    // The example's version projects share names with Compat Core's (:example:mc1710 and :mc1710), and Gradle
-    // treats projects with the same group:name:version as one module: :mc1710's dependency on the example's
-    // jar would resolve to :mc1710 itself. A separate group keeps them apart.
+    // The example's version projects share names with Compat's stubs projects (:example:mc1710 and
+    // :mc1710), and Gradle treats projects with the same group:name:version as one module: the example's
+    // stubs dependency would resolve to the example project itself. A separate group keeps them apart.
     group = property("mod_group") as String + if (path.startsWith(":example")) ".example" else ""
     version = property("mod_version") as String
 
@@ -22,9 +22,21 @@ subprojects {
 }
 
 val compatCore = listOf(":core", ":mc1710", ":mc1122", ":mc1165")
-val mcModules = compatCore.drop(1)
+val stubProjects = mapOf("1.7.10" to ":mc1710", "1.12.2" to ":mc1122", "1.16.5" to ":mc1165")
 
-// Compat Core is published to the yonside Maven repo; the example is never published.
+// Mods link against org.yonside.compat:compatcore-<minecraft> from Maven; inside this build, use the stubs
+// projects instead, the way an included build would.
+subprojects {
+    configurations.matching { it.name == "compatStubs" }.configureEach {
+        resolutionStrategy.dependencySubstitution {
+            stubProjects.forEach { (minecraft, path) ->
+                substitute(module("org.yonside.compat:compatcore-$minecraft")).using(project(path))
+            }
+        }
+    }
+}
+
+// Compat (the API and the stubs) is published to the yonside Maven repo; the example is never published.
 compatCore.forEach { path ->
     project(path) {
         pluginManager.withPlugin("maven-publish") {
@@ -49,13 +61,13 @@ compatCore.forEach { path ->
 
 tasks.register<Copy>("dist") {
     group = "build"
-    description = "Builds Compat Core for every Minecraft version and collects the release jars."
-    dependsOn(mcModules.map { "$it:build" })
+    description = "Builds Compat (the API and every version's stubs) and collects the jars mods link against."
+    dependsOn(compatCore.map { "$it:build" })
     into(layout.buildDirectory.dir("dist"))
-    mcModules.forEach { path ->
+    compatCore.forEach { path ->
         from(project(path).layout.buildDirectory.dir("libs")) {
             include("*.jar")
-            exclude("*-dev.jar", "*-dev-*.jar", "*-sources.jar", "*-javadoc.jar")
+            exclude("*-sources.jar", "*-javadoc.jar", "*-srg.jar", "*-downgraded*.jar")
         }
     }
 }
@@ -64,12 +76,12 @@ tasks.register<Copy>("dist") {
 // build's tasks, so it is tested and published on its own: ./gradlew -p gradle-plugin check / publish.
 tasks.register("publishAll") {
     group = "publishing"
-    description = "Publishes Compat Core (common and every Minecraft version) to the yonside Maven repo."
+    description = "Publishes Compat (the API and every Minecraft version's stubs) to the yonside Maven repo."
     dependsOn(compatCore.map { "$it:publishCompatPublicationToYonsideRepository" })
 }
 
 tasks.register("publishAllToMavenLocal") {
     group = "publishing"
-    description = "Installs Compat Core into ~/.m2 for testing against a mod outside this build."
+    description = "Installs Compat into ~/.m2 for testing against a mod outside this build."
     dependsOn(compatCore.map { "$it:publishCompatPublicationToMavenLocal" })
 }

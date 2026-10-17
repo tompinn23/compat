@@ -118,7 +118,7 @@ final class ModSourceGenerator {
         out.append("import org.yonside.compat.api.CompatAddon;\n");
         out.append("import org.yonside.compat.api.CompatWorld;\n\n");
 
-        out.append("/** Forwards Forge-bus events to the addon. Compat Core's mixin makes every world a CompatWorld. */\n");
+        out.append("/** Forwards Forge-bus events to the addon. Linking turns CompatWorld into this version's world type. */\n");
         out.append("public final class ").append(ctx.listenerClass).append(" {\n\n");
         out.append("    private final CompatAddon addon;\n\n");
         out.append("    public ").append(ctx.listenerClass).append("(CompatAddon addon) {\n");

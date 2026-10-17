@@ -67,25 +67,19 @@ class CompatPluginTest {
         assertEquals("1.2.3", spec.version());
         Map<String, ModSpec.Dependency> deps = spec.dependencies().stream()
             .collect(Collectors.toMap(ModSpec.Dependency::modId, d -> d));
-        assertEquals(List.of("compatcore", "other", "unimixins"), spec.dependencies().stream().map(ModSpec.Dependency::modId).toList());
-        // Declared compatcore keeps its AFTER ordering; the version project's "other" replaces the common one.
-        assertEquals("AFTER", deps.get("compatcore").ordering());
+        assertEquals(List.of("other", "compatcore", "unimixins"), spec.dependencies().stream().map(ModSpec.Dependency::modId).toList());
+        // The version project's "other" replaces the common one's; the common project's others carry over.
         assertEquals("[0.1.0,)", deps.get("compatcore").versionRange());
         assertEquals(false, deps.get("other").mandatory());
         assertNull(deps.get("other").versionRange());
     }
 
     @Test
-    void everyModButCompatCoreRequiresCompatCore() {
+    void modsDependOnlyOnWhatTheyDeclare() {
+        // Compat is linked into each mod, so there is no Compat mod to depend on.
         CompatExtension addon = compat(ProjectBuilder.builder().build());
         addon.getMod().getModId().set("fixturemod");
-        ModSpec.Dependency core = ModSpec.of(addon.getMod(), null).dependencies().get(0);
-        assertEquals("compatcore", core.modId());
-        assertEquals("AFTER", core.ordering());
-
-        CompatExtension compatCore = compat(ProjectBuilder.builder().build());
-        compatCore.getMod().getModId().set("compatcore");
-        assertEquals(List.of(), ModSpec.of(compatCore.getMod(), null).dependencies());
+        assertEquals(List.of(), ModSpec.of(addon.getMod(), null).dependencies());
     }
 
     @Test
