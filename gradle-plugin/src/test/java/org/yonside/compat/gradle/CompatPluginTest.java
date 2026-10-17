@@ -67,7 +67,8 @@ class CompatPluginTest {
         assertEquals("1.2.3", spec.version());
         Map<String, ModSpec.Dependency> deps = spec.dependencies().stream()
             .collect(Collectors.toMap(ModSpec.Dependency::modId, d -> d));
-        assertEquals(List.of("other", "compatcore", "unimixins"), spec.dependencies().stream().map(ModSpec.Dependency::modId).toList());
+        // Requires iterate by name; the common project's come first.
+        assertEquals(List.of("compatcore", "other", "unimixins"), spec.dependencies().stream().map(ModSpec.Dependency::modId).toList());
         // The version project's "other" replaces the common one's; the common project's others carry over.
         assertEquals("[0.1.0,)", deps.get("compatcore").versionRange());
         assertEquals(false, deps.get("other").mandatory());
