@@ -29,7 +29,7 @@ public record WorldStubs(World world) implements CompatWorld {
 
     @Override
     public int redstonePower(long pos) {
-        return world.isBlockIndirectlyGettingPowered(toBlockPos(pos));
+        return world.getRedstonePowerFromNeighbors(toBlockPos(pos));
     }
 
     static BlockPos toBlockPos(long pos) {
