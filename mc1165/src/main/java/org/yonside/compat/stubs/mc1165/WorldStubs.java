@@ -1,7 +1,11 @@
 package org.yonside.compat.stubs.mc1165;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import org.yonside.compat.api.CompatBlock;
 import org.yonside.compat.api.CompatWorld;
+import org.yonside.compat.api.Pos;
 import org.yonside.compat.stub.StubFor;
 
 /**
@@ -20,5 +24,19 @@ public record WorldStubs(Level level) implements CompatWorld {
     @Override
     public long totalTime() {
         return level.getGameTime();
+    }
+
+    @Override
+    public void setBlock(long pos, CompatBlock block) {
+        level.setBlockAndUpdate(toBlockPos(pos), ((Block) (Object) block).defaultBlockState());
+    }
+
+    @Override
+    public int redstonePower(long pos) {
+        return level.getBestNeighborSignal(toBlockPos(pos));
+    }
+
+    static BlockPos toBlockPos(long pos) {
+        return new BlockPos(Pos.x(pos), Pos.y(pos), Pos.z(pos));
     }
 }

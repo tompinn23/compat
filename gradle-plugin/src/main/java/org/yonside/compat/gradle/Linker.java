@@ -7,9 +7,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import org.gradle.api.GradleException;
@@ -35,6 +37,8 @@ import org.objectweb.asm.tree.MethodNode;
  *       cast and {@code instanceof};</li>
  *   <li>each call to such an interface's method becomes a static call to the unwrapped wrapper's method
  *       of the same name, which takes the wrapped type first;</li>
+ *   <li>each API class with a {@code @StubFor} class stub becomes that stub, so a mod's subclass of
+ *       {@code CompatBlock} extends the version's {@code LinkedBlock}, itself a Minecraft {@code Block};</li>
  *   <li>every other library class the mod reaches (stubs, API value types like {@code Pos}, the
  *       {@code CompatAddon} interface) is copied into the output, relocated under the mod's package so no
  *       two mods' copies ever meet.</li>
@@ -47,8 +51,10 @@ final class Linker {
 
     private record Stub(String owner, String name, String descriptor) {}
 
-    /** API interface to the Minecraft type replacing it. */
+    /** API type to what replaces it: a Minecraft type (wrappers) or a stub class (class stubs). */
     private final Map<String, String> typeMap = new HashMap<>();
+    /** The API interfaces whose calls become static stub calls. */
+    private final Set<String> wrapped = new HashSet<>();
     /** {@code api.name(args-after-mapping)ret} to the stub method implementing it. */
     private final Map<String, Stub> stubs = new HashMap<>();
     /** Every library class, by internal name. */
@@ -83,8 +89,11 @@ final class Linker {
             }
         }
         for (StubWrapper.Unwrapped unwrapped : wrappers) {
-            linker.library.put(unwrapped.node().name, StubWrapper.bytes(unwrapped.node()));
-            linker.index(unwrapped);
+            if (!unwrapped.classStub()) {
+                linker.wrapped.add(unwrapped.api());
+                linker.library.put(unwrapped.node().name, StubWrapper.bytes(unwrapped.node()));
+                linker.index(unwrapped);
+            }
         }
         return linker;
     }
@@ -115,7 +124,7 @@ final class Linker {
     Map<String, byte[]> link(Map<String, byte[]> mod) {
         Map<String, byte[]> out = new TreeMap<>();
         Deque<String> needed = new ArrayDeque<>();
-        LinkRemapper remapper = new LinkRemapper(needed);
+        LinkRemapper remapper = new LinkRemapper(needed, mod.keySet());
         for (Map.Entry<String, byte[]> entry : mod.entrySet()) {
             out.put(entry.getKey(), transform(entry.getValue(), remapper));
         }
@@ -147,20 +156,21 @@ final class Linker {
     private final class LinkRemapper extends Remapper {
 
         private final Deque<String> needed;
+        private final Set<String> modClasses;
         private final Map<String, String> seen = new LinkedHashMap<>();
 
-        LinkRemapper(Deque<String> needed) {
+        LinkRemapper(Deque<String> needed, Set<String> modClasses) {
             super(Opcodes.ASM9);
             this.needed = needed;
+            this.modClasses = modClasses;
         }
 
         @Override
         public String map(String internalName) {
-            String target = typeMap.get(internalName);
-            if (target != null) {
-                return target;
-            }
-            if (library.containsKey(internalName)) {
+            // An API type becomes what replaces it; a class stub is then relocated like any library class.
+            internalName = typeMap.getOrDefault(internalName, internalName);
+            // The mod's own classes keep their names, even if a library happens to contain them too.
+            if (library.containsKey(internalName) && !modClasses.contains(internalName)) {
                 return seen.computeIfAbsent(internalName, name -> {
                     needed.push(name);
                     return relocate(name);
@@ -191,7 +201,7 @@ final class Linker {
             return new MethodVisitor(Opcodes.ASM9, super.visitMethod(access, name, descriptor, signature, exceptions)) {
                 @Override
                 public void visitMethodInsn(int opcode, String owner, String callee, String desc, boolean isInterface) {
-                    if (typeMap.containsKey(owner) && opcode != Opcodes.INVOKESTATIC) {
+                    if (wrapped.contains(owner) && opcode != Opcodes.INVOKESTATIC) {
                         Stub stub = stubFor(owner, callee, desc, method);
                         super.visitMethodInsn(Opcodes.INVOKESTATIC, stub.owner(), stub.name(), receiverFirst(owner, desc), false);
                     } else {
@@ -203,7 +213,7 @@ final class Linker {
                 public void visitInvokeDynamicInsn(String indyName, String indyDesc, Handle bootstrap, Object... args) {
                     Object[] linked = args.clone();
                     for (int i = 0; i < linked.length; i++) {
-                        if (linked[i] instanceof Handle handle && typeMap.containsKey(handle.getOwner())
+                        if (linked[i] instanceof Handle handle && wrapped.contains(handle.getOwner())
                                 && handle.getTag() != Opcodes.H_INVOKESTATIC && handle.getTag() >= Opcodes.H_INVOKEVIRTUAL) {
                             Stub stub = stubFor(handle.getOwner(), handle.getName(), handle.getDesc(), method);
                             linked[i] = new Handle(Opcodes.H_INVOKESTATIC, stub.owner(), stub.name(),

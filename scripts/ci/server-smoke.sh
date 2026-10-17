@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boots one Minecraft version's dedicated dev server running the example on its own (Compat is linked in),
-# and passes once the example logs both its init and its world-load lines -- the end-to-end proof that
-# the generated @Mod class loaded, forwarded init, and received WorldEvent.Load as a CompatWorld.
+# and passes once the example logs its init, world-load and block lines -- the end-to-end proof that the
+# generated @Mod class loaded and forwarded its events, and that the example's block registered, was
+# placed, and had Minecraft call its neighbour-change hook.
 #
 # Usage: scripts/ci/server-smoke.sh <project dir>[:<task>], e.g. example/mc1122, or
 # example/mc1710:runServer21 for the Java 21 lwjgl3ify run. The task defaults to runServer.
@@ -28,7 +29,8 @@ stop() {
 
 result=""
 for ((elapsed = 0; elapsed < timeout_seconds; elapsed += 5)); do
-    if grep -q "Compat Example initialised" "$log" && grep -q "world is server" "$log"; then
+    if grep -q "Compat Example initialised" "$log" && grep -q "world is server" "$log" \
+        && grep -q "saw a neighbour change" "$log"; then
         result="pass"
         break
     fi

@@ -57,6 +57,8 @@ class GenerateModSourcesTest {
         assertTrue(mod.contains("acceptedMinecraftVersions = \"[1.7.10]\""), mod);
         assertTrue(mod.contains("dependencies = \"required-after:compatcore@[0.1.0,)\""), mod);
         assertTrue(mod.contains("private final CompatAddon addon = new com.example.FixtureMod();"), mod);
+        assertTrue(mod.contains("public void preInit(FMLPreInitializationEvent event) {\n        addon.onRegister((CompatRegistry) event);"), mod);
+        assertTrue(mod.contains("addon.onServerStarted((CompatWorld) MinecraftServer.getServer().worldServerForDimension(0));"), mod);
         String events = Files.readString(dir.resolve("out/com/example/FixtureModForgeEvents.java"));
         assertTrue(events.contains("addon.onWorldLoad((CompatWorld) event.world);"), events);
         assertTrue(events.contains("import cpw.mods.fml.common.eventhandler.SubscribeEvent;"), events);
@@ -69,12 +71,16 @@ class GenerateModSourcesTest {
         generate(MinecraftTarget.V1_12_2, classes.toFile());
         String events = Files.readString(dir.resolve("out/com/example/FixtureModForgeEvents.java"));
         assertTrue(events.contains("addon.onWorldLoad((CompatWorld) event.getWorld());"), events);
+        assertTrue(events.contains("public void registerBlocks(RegistryEvent.Register<Block> event)"), events);
         assertTrue(Files.readString(dir.resolve("out/com/example/FixtureModForgeMod.java")).contains("dependencies = \"required-after:compatcore@[0.1.0,)\""));
 
         generate(MinecraftTarget.V1_16_5, classes.toFile());
         String mod = Files.readString(dir.resolve("out/com/example/FixtureModForgeMod.java"));
         assertTrue(mod.contains("@Mod(\"fixturemod\")"), mod);
         assertTrue(mod.contains("public void init(FMLCommonSetupEvent event)"), mod);
+        assertTrue(mod.contains("public void registerBlocks(RegistryEvent.Register<Block> event)"), mod);
+        assertTrue(Files.readString(dir.resolve("out/com/example/FixtureModForgeEvents.java"))
+            .contains("addon.onServerStarted((CompatWorld) event.getServer().overworld());"));
         assertFalse(mod.contains("dependencies"), "mods.toml carries 1.16.5's dependencies");
     }
 

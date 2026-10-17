@@ -180,6 +180,84 @@ class LinkerTest {
         assertTrue(e.getMessage().contains("Implement it in the @StubFor(CompatWorld.class) wrapper"), e.getMessage());
     }
 
+    @Test
+    void aModsBlockClassBecomesARealMinecraftBlock() throws Exception {
+        Map<String, String> sources = new TreeMap<>(LIBRARY);
+        sources.put("org/yonside/compat/api/BlockHooks.java", """
+            package org.yonside.compat.api;
+            public interface BlockHooks { default void onNeighborChanged(CompatWorld world, long pos) {} }
+            """);
+        sources.put("org/yonside/compat/api/CompatBlock.java", """
+            package org.yonside.compat.api;
+            public abstract class CompatBlock implements BlockHooks { protected CompatBlock(float hardness) {} }
+            """);
+        sources.put("net/minecraft/block/Block.java", """
+            package net.minecraft.block;
+            public class Block { public final float hardness;
+                                 protected Block(float hardness) { this.hardness = hardness; }
+                                 public void onNeighborBlockChange(net.minecraft.world.World world, int x, int y, int z) {} }
+            """);
+        sources.put("org/yonside/compat/stubs/mc1710/LinkedBlock.java", """
+            package org.yonside.compat.stubs.mc1710;
+            import net.minecraft.block.Block;
+            import net.minecraft.world.World;
+            import org.yonside.compat.api.*;
+            @org.yonside.compat.stub.StubFor(CompatBlock.class)
+            public abstract class LinkedBlock extends Block implements BlockHooks {
+                protected LinkedBlock(float hardness) { super(hardness); }
+                @Override public final void onNeighborBlockChange(World world, int x, int y, int z) {
+                    onNeighborChanged((CompatWorld) world, Pos.pack(x, y, z));
+                }
+            }
+            """);
+        sources.put("com/example/MachineBlock.java", """
+            package com.example;
+            import org.yonside.compat.api.*;
+            public class MachineBlock extends CompatBlock {
+                public static String seen;
+                public MachineBlock() { super(3f); }
+                @Override public void onNeighborChanged(CompatWorld world, long pos) {
+                    seen = (world.isClientSide() ? "client" : "server") + " y=" + Pos.y(pos);
+                }
+            }
+            """);
+        Path compiled = Fixtures.compileOnly(dir, "blocks", sources);
+        Path library = dir.resolve("block-library");
+        for (Map.Entry<String, byte[]> entry : classes(compiled, "org/yonside/compat/").entrySet()) {
+            PluginFiles.write(library.resolve(entry.getKey() + ".class"), entry.getValue());
+        }
+        Linker linker = Linker.load(List.of(library.toFile()), "com/example/compat/", "1.7.10");
+        Map<String, byte[]> linked = linker.link(classes(compiled, "com/example/"));
+        assertTrue(linked.containsKey("com/example/compat/stubs/mc1710/LinkedBlock"), linked.keySet().toString());
+        assertTrue(linked.containsKey("com/example/compat/api/BlockHooks"), linked.keySet().toString());
+        assertFalse(linked.containsKey("com/example/compat/api/CompatBlock"), "the API class is replaced, not copied");
+
+        Map<String, byte[]> minecraft = new TreeMap<>();
+        ClassScanner.readClasses(List.of(compiled.toFile()), minecraft);
+        minecraft.keySet().removeIf(name -> !name.startsWith("net/minecraft/"));
+        ClassLoader loader = new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                String internal = name.replace('.', '/');
+                byte[] bytes = minecraft.containsKey(internal) ? minecraft.get(internal) : linked.get(internal);
+                if (bytes == null) {
+                    throw new ClassNotFoundException(name);
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
+        Class<?> blockClass = loader.loadClass("net.minecraft.block.Block");
+        Class<?> worldClass = loader.loadClass("net.minecraft.world.World");
+        Class<?> machineClass = loader.loadClass("com.example.MachineBlock");
+        assertTrue(blockClass.isAssignableFrom(machineClass), "MachineBlock is a Block once linked");
+        Object machine = machineClass.getConstructor().newInstance();
+        assertEquals(3f, blockClass.getField("hardness").getFloat(machine));
+        // Minecraft calls its own method; the stub turns it into the mod's hook.
+        blockClass.getMethod("onNeighborBlockChange", worldClass, int.class, int.class, int.class)
+            .invoke(machine, worldClass.getConstructor().newInstance(), 1, 64, 3);
+        assertEquals("server y=64", machineClass.getField("seen").get(null));
+    }
+
     private static Map<String, String> withMod(String mod) {
         Map<String, String> sources = new TreeMap<>(LIBRARY);
         sources.put("com/example/FixtureMod.java", mod);

@@ -36,12 +36,26 @@ final class StubWrapper {
     private static final Set<String> OBJECT_METHODS = Set.of(
         "equals(Ljava/lang/Object;)Z", "hashCode()I", "toString()Ljava/lang/String;");
 
-    /** The API interface implemented, the wrapped type, and the unwrapped class. */
-    record Unwrapped(String api, String target, ClassNode node) {}
+    /**
+     * A {@code @StubFor} class, read. For a wrapper: the API interface, the wrapped type and the
+     * unwrapped class. For a class stub (see {@link #unwrap}): the API class, the stub class itself, and
+     * no node, as it is linked unchanged.
+     */
+    record Unwrapped(String api, String target, ClassNode node) {
+
+        boolean classStub() {
+            return node == null;
+        }
+    }
 
     private StubWrapper() {}
 
-    /** Null if {@code bytes} is not a {@code @StubFor} class. */
+    /**
+     * Null if {@code bytes} is not a {@code @StubFor} class. A record is a wrapper and is unwrapped.
+     * Any other class is a class stub, standing in for an API class mods extend (e.g.
+     * {@code LinkedBlock extends Block} for {@code CompatBlock}): linking makes the API class that class,
+     * so a mod's subclass ends up extending the Minecraft class.
+     */
     static Unwrapped unwrap(byte[] bytes) {
         ClassNode in = new ClassNode();
         new ClassReader(bytes).accept(in, ClassReader.EXPAND_FRAMES);
@@ -50,6 +64,12 @@ final class StubWrapper {
             return null;
         }
         String name = in.name;
+        if (!"java/lang/Record".equals(in.superName)) {
+            if ((in.access & Opcodes.ACC_ABSTRACT) == 0) {
+                throw new GradleException("@StubFor class " + name.replace('/', '.') + " must be abstract: mods extend it.");
+            }
+            return new Unwrapped(api, name, null);
+        }
         String where = "@StubFor wrapper " + name.replace('/', '.');
         if (!in.interfaces.contains(api)) {
             throw new GradleException(where + " must implement " + api.replace('/', '.') + ".");

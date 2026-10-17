@@ -1,6 +1,7 @@
 package org.yonside.compat.gradle;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -50,19 +51,34 @@ final class ModSourceGenerator {
     private static String modClass(Context ctx) {
         StringBuilder out = new StringBuilder(ctx.header());
         switch (ctx.target.loader) {
-            case CPW -> legacyMod(out, ctx, "cpw.mods.fml.common.Mod", "cpw.mods.fml.common.event.FMLInitializationEvent");
-            case FML -> legacyMod(out, ctx, "net.minecraftforge.fml.common.Mod",
-                "net.minecraftforge.fml.common.event.FMLInitializationEvent");
+            case CPW -> legacyMod(out, ctx, "cpw.mods.fml.common", List.of(
+                "import cpw.mods.fml.common.event.FMLPreInitializationEvent;",
+                "import net.minecraft.server.MinecraftServer;"),
+                "MinecraftServer.getServer().worldServerForDimension(0)");
+            case FML -> legacyMod(out, ctx, "net.minecraftforge.fml.common", List.of(
+                "import net.minecraftforge.fml.common.FMLCommonHandler;"),
+                "FMLCommonHandler.instance().getMinecraftServerInstance().getWorld(0)");
             case FORGE -> forgeMod(out, ctx);
         }
         return out.toString();
     }
 
-    private static void legacyMod(StringBuilder out, Context ctx, String modAnnotation, String initEvent) {
-        out.append("import ").append(modAnnotation).append(";\n");
-        out.append("import ").append(initEvent).append(";\n");
+    /**
+     * 1.7.10 and 1.12.2: lifecycle events through @Mod.EventHandler. 1.7.10 registers in pre-init;
+     * 1.12.2 in the block registry event, which the listener handles.
+     */
+    private static void legacyMod(StringBuilder out, Context ctx, String fml, List<String> imports, String overworld) {
+        boolean preInitRegisters = ctx.target.loader == MinecraftTarget.Loader.CPW;
+        out.append("import ").append(fml).append(".Mod;\n");
+        out.append("import ").append(fml).append(".event.FMLInitializationEvent;\n");
+        out.append("import ").append(fml).append(".event.FMLServerStartedEvent;\n");
+        imports.forEach(line -> out.append(line).append('\n'));
         out.append("import net.minecraftforge.common.MinecraftForge;\n");
-        out.append("import org.yonside.compat.api.CompatAddon;\n\n");
+        out.append("import org.yonside.compat.api.CompatAddon;\n");
+        if (preInitRegisters) {
+            out.append("import org.yonside.compat.api.CompatRegistry;\n");
+        }
+        out.append("import org.yonside.compat.api.CompatWorld;\n\n");
 
         out.append("@Mod(\n");
         out.append("    modid = ").append(literal(ctx.modId)).append(",\n");
@@ -77,20 +93,34 @@ final class ModSourceGenerator {
         out.append("    public ").append(ctx.modClass).append("() {\n");
         out.append("        MinecraftForge.EVENT_BUS.register(new ").append(ctx.listenerClass).append("(addon));\n");
         out.append("    }\n\n");
+        if (preInitRegisters) {
+            out.append("    @Mod.EventHandler\n");
+            out.append("    public void preInit(FMLPreInitializationEvent event) {\n");
+            out.append("        addon.onRegister((CompatRegistry) event);\n");
+            out.append("    }\n\n");
+        }
         out.append("    @Mod.EventHandler\n");
         out.append("    public void init(FMLInitializationEvent event) {\n");
         out.append("        addon.onInit();\n");
+        out.append("    }\n\n");
+        out.append("    @Mod.EventHandler\n");
+        out.append("    public void serverStarted(FMLServerStartedEvent event) {\n");
+        out.append("        addon.onServerStarted((CompatWorld) ").append(overworld).append(");\n");
         out.append("    }\n");
         out.append("}\n");
     }
 
+    /** 1.16.5: mod-bus handlers here (setup, registration); Forge-bus ones in the listener. */
     private static void forgeMod(StringBuilder out, Context ctx) {
+        out.append("import net.minecraft.world.level.block.Block;\n");
         out.append("import net.minecraftforge.common.MinecraftForge;\n");
+        out.append("import net.minecraftforge.event.RegistryEvent;\n");
         out.append("import net.minecraftforge.eventbus.api.SubscribeEvent;\n");
         out.append("import net.minecraftforge.fml.common.Mod;\n");
         out.append("import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;\n");
         out.append("import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;\n");
-        out.append("import org.yonside.compat.api.CompatAddon;\n\n");
+        out.append("import org.yonside.compat.api.CompatAddon;\n");
+        out.append("import org.yonside.compat.api.CompatRegistry;\n\n");
 
         out.append("@Mod(").append(literal(ctx.modId)).append(")\n");
         out.append("public final class ").append(ctx.modClass).append(" {\n\n");
@@ -100,6 +130,10 @@ final class ModSourceGenerator {
         out.append("        MinecraftForge.EVENT_BUS.register(new ").append(ctx.listenerClass).append("(addon));\n");
         out.append("    }\n\n");
         out.append("    @SubscribeEvent\n");
+        out.append("    public void registerBlocks(RegistryEvent.Register<Block> event) {\n");
+        out.append("        addon.onRegister((CompatRegistry) event);\n");
+        out.append("    }\n\n");
+        out.append("    @SubscribeEvent\n");
         out.append("    public void init(FMLCommonSetupEvent event) {\n");
         out.append("        addon.onInit();\n");
         out.append("    }\n");
@@ -107,27 +141,49 @@ final class ModSourceGenerator {
     }
 
     private static String listenerClass(Context ctx) {
-        String subscribeEvent = switch (ctx.target.loader) {
+        MinecraftTarget.Loader loader = ctx.target.loader;
+        StringBuilder out = new StringBuilder(ctx.header());
+        out.append("import ").append(switch (loader) {
             case CPW -> "cpw.mods.fml.common.eventhandler.SubscribeEvent";
             case FML -> "net.minecraftforge.fml.common.eventhandler.SubscribeEvent";
             case FORGE -> "net.minecraftforge.eventbus.api.SubscribeEvent";
-        };
-        StringBuilder out = new StringBuilder(ctx.header());
-        out.append("import ").append(subscribeEvent).append(";\n");
+        }).append(";\n");
+        if (loader == MinecraftTarget.Loader.FML) {
+            out.append("import net.minecraft.block.Block;\n");
+            out.append("import net.minecraftforge.event.RegistryEvent;\n");
+        }
+        if (loader == MinecraftTarget.Loader.FORGE) {
+            out.append("import net.minecraftforge.fml.event.server.FMLServerStartedEvent;\n");
+        }
         out.append("import net.minecraftforge.event.world.WorldEvent;\n");
         out.append("import org.yonside.compat.api.CompatAddon;\n");
+        if (loader == MinecraftTarget.Loader.FML) {
+            out.append("import org.yonside.compat.api.CompatRegistry;\n");
+        }
         out.append("import org.yonside.compat.api.CompatWorld;\n\n");
 
-        out.append("/** Forwards Forge-bus events to the addon. Linking turns CompatWorld into this version's world type. */\n");
+        out.append("/** Forwards Forge-bus events to the addon. Linking turns the Compat types into this version's. */\n");
         out.append("public final class ").append(ctx.listenerClass).append(" {\n\n");
         out.append("    private final CompatAddon addon;\n\n");
         out.append("    public ").append(ctx.listenerClass).append("(CompatAddon addon) {\n");
         out.append("        this.addon = addon;\n");
         out.append("    }\n\n");
+        if (loader == MinecraftTarget.Loader.FML) {
+            out.append("    @SubscribeEvent\n");
+            out.append("    public void registerBlocks(RegistryEvent.Register<Block> event) {\n");
+            out.append("        addon.onRegister((CompatRegistry) event);\n");
+            out.append("    }\n\n");
+        }
+        if (loader == MinecraftTarget.Loader.FORGE) {
+            out.append("    @SubscribeEvent\n");
+            out.append("    public void serverStarted(FMLServerStartedEvent event) {\n");
+            out.append("        addon.onServerStarted((CompatWorld) event.getServer().overworld());\n");
+            out.append("    }\n\n");
+        }
         out.append("    @SubscribeEvent\n");
         out.append("    public void onWorldLoad(WorldEvent.Load event) {\n");
         // 1.7.10's WorldEvent has a public field; later versions a getter.
-        String world = ctx.target.loader == MinecraftTarget.Loader.CPW ? "event.world" : "event.getWorld()";
+        String world = loader == MinecraftTarget.Loader.CPW ? "event.world" : "event.getWorld()";
         out.append("        addon.onWorldLoad((CompatWorld) ").append(world).append(");\n");
         out.append("    }\n");
         out.append("}\n");
