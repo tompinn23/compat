@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -218,12 +219,12 @@ final class PlatformSetup {
      */
     private static void configureDevRuns(Project project) {
         Configuration mods = devRunModsConfiguration(project, DEV_RUN_MODS, "Java 8 dev runs");
-        Configuration mods21 = devRunModsConfiguration(project, DEV_RUN_MODS_21, "Java 21 dev runs (lwjgl3ify)");
+        // Filled by compat.devRunMod; compat.lwjgl3ify installs it in its runs.
+        devRunModsConfiguration(project, DEV_RUN_MODS_21, "Java 21 dev runs (lwjgl3ify)");
         boolean loom = project.getPluginManager().hasPlugin("dev.architectury.loom");
         // Loom only sets a run task's working directory when it launches, so use its default run directory.
         File loomRunDir = loom ? project.getLayout().getProjectDirectory().dir("run").getAsFile() : null;
-        installModsBeforeRuns(project, Set.of("runClient", "runServer"), mods, loomRunDir);
-        installModsBeforeRuns(project, Set.of(RfgSetup.RUN_CLIENT_21, RfgSetup.RUN_SERVER_21), mods21, null);
+        installModsBeforeRuns(project, List.of("runClient", "runServer"), mods, loomRunDir);
     }
 
     private static Configuration devRunModsConfiguration(Project project, String name, String purpose) {
@@ -235,20 +236,25 @@ final class PlatformSetup {
         });
     }
 
-    private static void installModsBeforeRuns(Project project, Set<String> runs, Configuration mods, File fixedRunDir) {
+    /**
+     * A prepare task per run, rather than a doFirst on the run: RFG checks the EULA in an action of its
+     * own, which would otherwise come first on runs it sets up later (runServer21).
+     */
+    static void installModsBeforeRuns(Project project, List<String> runs, Configuration mods, File fixedRunDir) {
         boolean acceptEula = project.getProviders().gradleProperty("compat.acceptEula").map(Boolean::parseBoolean).getOrElse(false);
-        project.getTasks().withType(JavaExec.class).matching(t -> runs.contains(t.getName()))
-            .configureEach(task -> {
+        for (String name : runs) {
+            boolean writeEula = name.startsWith("runServer") && acceptEula;
+            TaskProvider<Task> install = project.getTasks().register("prepare" + Character.toUpperCase(name.charAt(0)) + name.substring(1), task -> {
+                task.setDescription("Installs the dev-run mods in " + name + "'s mods folder.");
                 task.dependsOn(mods);
                 FileCollection modFiles = mods;
-                boolean writeEula = task.getName().startsWith("runServer") && acceptEula;
-                task.doFirst(t -> {
-                    File runDir = fixedRunDir != null ? fixedRunDir : ((JavaExec) t).getWorkingDir();
+                task.doLast(t -> {
+                    File dir = fixedRunDir != null ? fixedRunDir : project.getTasks().named(name, JavaExec.class).get().getWorkingDir();
                     if (writeEula) {
-                        runDir.mkdirs();
-                        write(new File(runDir, "eula.txt"), "eula=true\n");
+                        dir.mkdirs();
+                        write(new File(dir, "eula.txt"), "eula=true\n");
                     }
-                    File modsDir = new File(runDir, "mods");
+                    File modsDir = new File(dir, "mods");
                     modsDir.mkdirs();
                     // Drop any copy from an earlier version of the same mod so the loader does not see it twice.
                     Set<String> names = modFiles.getFiles().stream().map(f -> baseName(f.getName())).collect(Collectors.toSet());
@@ -263,10 +269,12 @@ final class PlatformSetup {
                     for (File file : modFiles.getFiles()) {
                         copy(file, new File(modsDir, file.getName()));
                     }
-                    t.getLogger().lifecycle("{}: installed dev-run mods {} in {}", t.getName(),
+                    t.getLogger().lifecycle("{}: installed dev-run mods {} in {}", name,
                         modFiles.getFiles().stream().map(File::getName).toList(), modsDir);
                 });
             });
+            project.getTasks().withType(JavaExec.class).matching(t -> t.getName().equals(name)).configureEach(run -> run.dependsOn(install));
+        }
     }
 
     /** {@code mymod-1.7.10-0.1.0-dev-shaded.jar} → {@code mymod-1.7.10}: archive name up to the version. */

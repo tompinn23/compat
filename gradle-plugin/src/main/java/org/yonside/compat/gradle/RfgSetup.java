@@ -202,6 +202,8 @@ final class RfgSetup {
                 task.setWorkingDir(project.file("run/lwjgl3ify"));
             });
         }
+        PlatformSetup.installModsBeforeRuns(project, List.of(RUN_CLIENT_21, RUN_SERVER_21),
+            project.getConfigurations().getByName(PlatformSetup.DEV_RUN_MODS_21), null);
     }
 
     /** Found via the FMLCorePlugin manifest entry in production and -Dfml.coreMods.load in dev. */
