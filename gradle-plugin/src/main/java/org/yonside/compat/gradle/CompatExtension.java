@@ -154,6 +154,27 @@ public abstract class CompatExtension {
         requireMinecraft("devRunMod");
         project.getDependencies().add(PlatformSetup.DEV_RUN_MODS,
             project.getDependencies().project(Map.of("path", projectPath, "configuration", PlatformSetup.DEV_MOD_ELEMENTS)));
+        // Modern-Java runs (lwjgl3ify) load its Java 21 dev jar, no downgrade.
+        project.getDependencies().add(PlatformSetup.DEV_RUN_MODS_21,
+            project.getDependencies().project(Map.of("path", projectPath, "configuration", PlatformSetup.DEV_ELEMENTS)));
+    }
+
+    /**
+     * 1.7.10: adds {@code runClient21} / {@code runServer21}, which run the game on Java 21 with
+     * lwjgl3ify, loading the Java 21 dev jars directly -- what players on lwjgl3ify use the -java21 jar
+     * for. They run in run/lwjgl3ify, and {@link #devRunMod} mods get their Java 21 jars there.
+     */
+    public void lwjgl3ify() {
+        lwjgl3ify(RfgSetup.DEFAULT_LWJGL3IFY);
+    }
+
+    /** As {@link #lwjgl3ify()}, with a given lwjgl3ify version, e.g. {@code "3.0.33"}. */
+    public void lwjgl3ify(String version) {
+        requireMinecraft("lwjgl3ify");
+        if (target != MinecraftTarget.V1_7_10) {
+            throw new GradleException("compat.lwjgl3ify: lwjgl3ify is for Minecraft 1.7.10, not " + target.version + ".");
+        }
+        RfgSetup.lwjgl3ify(project, version);
     }
 
     /** Escape hatch: configures RetroFuturaGradle's {@code minecraft} extension (1.7.10, 1.12.2). */

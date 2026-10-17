@@ -56,6 +56,8 @@ final class PlatformSetup {
     static final String PUBLICATION = "compat";
     /** Resolvable: other version projects' mods to install in this project's dev runs. */
     static final String DEV_RUN_MODS = "compatDevRunMods";
+    /** Resolvable: other version projects' Java 21 dev jars, for this project's modern-Java dev runs. */
+    static final String DEV_RUN_MODS_21 = "compatDevRunMods21";
     /** Consumable: this project's downgraded dev-name jar, for other projects' dev runs. */
     static final String DEV_MOD_ELEMENTS = "compatDevMod";
     /** Consumable: this project's Java 21 dev-name jar, for other mods in the build to compile against. */
@@ -211,26 +213,37 @@ final class PlatformSetup {
     /**
      * Dev runs install {@link #DEV_RUN_MODS} in their mods folder rather than on the classpath, exactly
      * as a player would, and accept Mojang's EULA only when asked to with -Pcompat.acceptEula=true (CI's
-     * server smoke test does).
+     * server smoke test does). The Java 8 runs get other mods' downgraded jars; modern-Java runs such as
+     * lwjgl3ify's get their Java 21 dev jars ({@link #DEV_RUN_MODS_21}).
      */
     private static void configureDevRuns(Project project) {
-        Configuration mods = project.getConfigurations().create(DEV_RUN_MODS, c -> {
-            c.setCanBeConsumed(false);
-            c.setCanBeResolved(true);
-            c.setTransitive(false);
-            c.setDescription("Mods installed in this project's dev runs, e.g. via compat.devRunMod(\":other:mc1710\").");
-        });
-        boolean acceptEula = project.getProviders().gradleProperty("compat.acceptEula").map(Boolean::parseBoolean).getOrElse(false);
+        Configuration mods = devRunModsConfiguration(project, DEV_RUN_MODS, "Java 8 dev runs");
+        Configuration mods21 = devRunModsConfiguration(project, DEV_RUN_MODS_21, "Java 21 dev runs (lwjgl3ify)");
         boolean loom = project.getPluginManager().hasPlugin("dev.architectury.loom");
         // Loom only sets a run task's working directory when it launches, so use its default run directory.
         File loomRunDir = loom ? project.getLayout().getProjectDirectory().dir("run").getAsFile() : null;
-        project.getTasks().withType(JavaExec.class).matching(t -> t.getName().equals("runClient") || t.getName().equals("runServer"))
+        installModsBeforeRuns(project, Set.of("runClient", "runServer"), mods, loomRunDir);
+        installModsBeforeRuns(project, Set.of(RfgSetup.RUN_CLIENT_21, RfgSetup.RUN_SERVER_21), mods21, null);
+    }
+
+    private static Configuration devRunModsConfiguration(Project project, String name, String purpose) {
+        return project.getConfigurations().create(name, c -> {
+            c.setCanBeConsumed(false);
+            c.setCanBeResolved(true);
+            c.setTransitive(false);
+            c.setDescription("Mods installed in this project's " + purpose + ", e.g. via compat.devRunMod(\":other:mc1710\").");
+        });
+    }
+
+    private static void installModsBeforeRuns(Project project, Set<String> runs, Configuration mods, File fixedRunDir) {
+        boolean acceptEula = project.getProviders().gradleProperty("compat.acceptEula").map(Boolean::parseBoolean).getOrElse(false);
+        project.getTasks().withType(JavaExec.class).matching(t -> runs.contains(t.getName()))
             .configureEach(task -> {
                 task.dependsOn(mods);
                 FileCollection modFiles = mods;
-                boolean writeEula = task.getName().equals("runServer") && acceptEula;
+                boolean writeEula = task.getName().startsWith("runServer") && acceptEula;
                 task.doFirst(t -> {
-                    File runDir = loomRunDir != null ? loomRunDir : ((JavaExec) t).getWorkingDir();
+                    File runDir = fixedRunDir != null ? fixedRunDir : ((JavaExec) t).getWorkingDir();
                     if (writeEula) {
                         runDir.mkdirs();
                         write(new File(runDir, "eula.txt"), "eula=true\n");

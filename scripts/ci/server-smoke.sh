@@ -3,16 +3,20 @@
 # and passes once the example logs both its init and its world-load lines -- the end-to-end proof that
 # the generated @Mod class loaded, forwarded init, and received WorldEvent.Load as a CompatWorld.
 #
-# Usage: scripts/ci/server-smoke.sh mc1710|mc1122|mc1165
+# Usage: scripts/ci/server-smoke.sh <module>[:<task>], e.g. mc1122, or mc1710:runServer21 for the
+# Java 21 lwjgl3ify run. The task defaults to runServer.
 set -uo pipefail
 
-module="$1"
+module="${1%%:*}"
+task="runServer"
+[[ "$1" == *:* ]] && task="${1#*:}"
+name="$module-$task"
 timeout_seconds="${SMOKE_TIMEOUT:-1500}"
-log="build/smoke-$module.log"
+log="build/smoke-$name.log"
 mkdir -p build
 
 # A new process group, so the server JVM Gradle forks dies with it.
-setsid ./gradlew --no-daemon --stacktrace ":$module:runServer" -Pcompat.acceptEula=true >"$log" 2>&1 &
+setsid ./gradlew --no-daemon --stacktrace ":$module:$task" -Pcompat.acceptEula=true >"$log" 2>&1 &
 gradle_pid=$!
 
 stop() {
@@ -46,7 +50,7 @@ if [ "$result" != pass ]; then
     echo "----- diagnostics -----"
     # The mods the dev run installed, and what the example jars contain.
     ls -la "$module"/run/mods "$module"/run/*/mods 2>/dev/null
-    for jar in "$module"/run/mods/*.jar example/"$module"/build/libs/*.jar; do
+    for jar in "$module"/run/mods/*.jar "$module"/run/*/mods/*.jar example/"$module"/build/libs/*.jar; do
         [ -f "$jar" ] || continue
         echo "== $jar"
         unzip -l "$jar" | grep -vE "jvmdg/|META-INF/$" | head -n 40
@@ -64,7 +68,7 @@ if [ "$result" != pass ]; then
 fi
 
 case "$result" in
-    pass) echo "SMOKE PASS: $module" ;;
-    "") echo "SMOKE FAIL: $module timed out after ${timeout_seconds}s"; tail -n 100 "$log"; exit 1 ;;
-    *) echo "SMOKE FAIL: $module ($result)"; tail -n 150 "$log"; exit 1 ;;
+    pass) echo "SMOKE PASS: $name" ;;
+    "") echo "SMOKE FAIL: $name timed out after ${timeout_seconds}s"; tail -n 100 "$log"; exit 1 ;;
+    *) echo "SMOKE FAIL: $name ($result)"; tail -n 150 "$log"; exit 1 ;;
 esac

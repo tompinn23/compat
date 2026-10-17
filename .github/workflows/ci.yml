@@ -76,14 +76,15 @@ jobs:
           path: "**/build/reports/"
 
   smoke:
-    name: Server smoke test (${{ matrix.module }})
+    name: Server smoke test (${{ matrix.run }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        module: [mc1710, mc1122, mc1165]
+        # <module>[:<task>]; mc1710:runServer21 is 1.7.10 on Java 21 with lwjgl3ify.
+        run: [mc1710, mc1122, mc1165, "mc1710:runServer21"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDKs 8 (Azul, for RFG), 25 (Gradle daemon) and 21 (sources)
@@ -102,17 +103,18 @@ jobs:
           mkdir -p ~/.gradle
           echo "org.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> ~/.gradle/gradle.properties
       - uses: gradle/actions/setup-gradle@v4
-      - run: scripts/ci/server-smoke.sh ${{ matrix.module }}
+      - run: scripts/ci/server-smoke.sh ${{ matrix.run }}
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-${{ matrix.module }}
+          # Artifact names cannot contain ':'.
+          name: smoke-${{ strategy.job-index }}
           path: |
-            build/smoke-${{ matrix.module }}.log
-            ${{ matrix.module }}/run/logs/
-            ${{ matrix.module }}/run/crash-reports/
-            ${{ matrix.module }}/run/**/logs/
-            ${{ matrix.module }}/run/**/crash-reports/
+            build/smoke-*.log
+            mc*/run/logs/
+            mc*/run/crash-reports/
+            mc*/run/**/logs/
+            mc*/run/**/crash-reports/
 
   publish:
     name: Publish to maven.yonside.org
