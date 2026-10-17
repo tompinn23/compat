@@ -1,13 +1,17 @@
-import xyz.wagyourtail.jvmdg.gradle.task.DowngradeJar
-
+// Compat Core's common project: the API and framework every Minecraft version shares, Java 21 with no
+// Minecraft or Forge. Embedded in each version's jar and published as compatcore-common, which mods
+// built on Compat Core compile against.
 plugins {
-    `java-library`
-    id("xyz.wagyourtail.jvmdowngrader")
+    id("org.yonside.compat")
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+compat {
+    common()
+    mod {
+        modId = property("mod_id") as String  // frozen: published worlds and mods refer to it
+        displayName = property("mod_name") as String
+        description = property("mod_description") as String
+        license = property("mod_license") as String
     }
 }
 
@@ -23,29 +27,4 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-}
-
-val embedElements = configurations.create("embedElements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-
-artifacts {
-    add(embedElements.name, tasks.jar)
-}
-
-// A Java 8 view of the API. Java 21 class files are unreadable to a Java 8 javac, which is what most
-// 1.7.10 and 1.12.2 mods still use, so consumers -- including the example mods here -- compile
-// against this instead of the Java 21 jar. Compile-only: the real classes ship inside each mod jar.
-val api8Jar = tasks.named<DowngradeJar>("downgradeJar") {
-    archiveClassifier = "java8"
-}
-
-val api8Elements = configurations.create("api8Elements") {
-    isCanBeConsumed = true
-    isCanBeResolved = false
-}
-
-artifacts {
-    add(api8Elements.name, api8Jar)
 }

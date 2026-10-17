@@ -8,13 +8,11 @@ import org.yonside.compat.api.Pos;
 import org.yonside.compat.mte.MachineEvent;
 
 /**
- * Every bit of this example's behaviour, written once against the Compat Core API and shared by the
- * 1.7.10, 1.12.2 and 1.16.5 modules. Nothing here imports Minecraft, so it compiles unchanged on all
- * three -- that is the whole point of the framework.
+ * The example's behaviour, written once against the Compat Core API. Nothing here imports Minecraft,
+ * so the same class file runs on 1.7.10, 1.12.2 and 1.16.5 -- that is the whole point of the framework.
  *
- * <p>Plain Java 8 source on purpose: MachineEvent's records and sealed interface come through
- * JvmDowngrader as ordinary classes and methods, so a consumer on a Java 8 toolchain can still use
- * them, just with {@code instanceof} instead of a pattern-matching switch.
+ * <p>Java 21 throughout, like Compat Core itself: the addon plugin downgrades each version's finished jar
+ * to Java 8, so the switch over MachineEvent's sealed records below runs on 1.7.10's Java 8 too.
  */
 public final class ExampleMachine {
 
@@ -39,13 +37,9 @@ public final class ExampleMachine {
         return lastTick;
     }
 
-    /**
-     * The whole smoke test, shared by all three versions: prove the mixin applied, then push a few
-     * MachineEvents through. Returns the lines to log so each platform module only has to decide
-     * where logging goes and how to get hold of its world object.
-     */
-    public List<String> report(Object world) {
-        List<String> lines = new ArrayList<String>();
+    /** The whole smoke test: report the world's side, then push a few MachineEvents through. */
+    public List<String> report(CompatWorld world) {
+        var lines = new ArrayList<String>();
         lines.add("world is " + describeWorld(world));
         lines.add(accept(new MachineEvent.Tick(++tick)));
         lines.add(accept(new MachineEvent.RedstoneChanged(redstonePower, 15)));
@@ -54,25 +48,21 @@ public final class ExampleMachine {
         return lines;
     }
 
-    /** Returns the line to log, so each platform module only has to decide where logging goes. */
+    /** Returns the line to log. */
     public String accept(MachineEvent event) {
-        if (event instanceof MachineEvent.Tick) {
-            lastTick = ((MachineEvent.Tick) event).worldTime();
-        } else if (event instanceof MachineEvent.RedstoneChanged) {
-            redstonePower = ((MachineEvent.RedstoneChanged) event).newPower();
+        switch (event) {
+            case MachineEvent.Tick(long worldTime) -> lastTick = worldTime;
+            case MachineEvent.RedstoneChanged(int oldPower, int newPower) -> redstonePower = newPower;
+            case MachineEvent.NeighborChanged ignored -> { }
         }
         return position() + " " + MachineEvent.describe(event);
     }
 
     /**
-     * The cast every version shares. Compat Core's mixin injects CompatWorld onto 1.7.10 and 1.12.2's
-     * {@code World} and onto 1.16.5's {@code Level}, so this needs no wrapper object and no
-     * per-version branch. Takes Object because the declared type is the one thing that does differ.
-     *
-     * @throws ClassCastException if Compat Core's mixin did not apply -- which makes this a useful
-     *         smoke test that the coremod loaded.
+     * Compat Core's mixin injects CompatWorld onto 1.7.10 and 1.12.2's {@code World} and onto 1.16.5's
+     * {@code Level}, and hands addons the world already typed as one: no wrapper, no per-version branch.
      */
-    public static String describeWorld(Object world) {
-        return ((CompatWorld) world).compat$isClientSide() ? "client" : "server";
+    public static String describeWorld(CompatWorld world) {
+        return world.compat$isClientSide() ? "client" : "server";
     }
 }

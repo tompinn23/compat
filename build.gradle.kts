@@ -1,13 +1,19 @@
-// RFG and Loom are declared but never applied here, so every subproject that applies one resolves
-// it from a single root classloader scope. Without this, applying RFG to both :mc1122 and
-// :example:mc1122 loads it twice and its shared RfgCacheService fails to cross the two loaders.
+import org.gradle.api.publish.PublishingExtension
+
+// The compat plugin brings RetroFuturaGradle, Architectury Loom and JvmDowngrader with it. Declaring it
+// here, unapplied, puts one copy of all of them in the root classloader scope that every subproject
+// shares. RFG needs that: applied to both :mc1710 and :mc1122 from separate scopes, it loads twice and
+// its shared RfgCacheService cannot cross the two loaders. One scope also means one resolved classpath,
+// so JvmDowngrader gets the newer commons-compress it needs rather than RFG's or Loom's.
 plugins {
-    id("com.gtnewhorizons.retrofuturagradle") apply false
-    id("dev.architectury.loom") apply false
+    id("org.yonside.compat") apply false
 }
 
 subprojects {
-    group = property("mod_group") as String
+    // The example's version projects share names with Compat Core's (:example:mc1710 and :mc1710), and Gradle
+    // treats projects with the same group:name:version as one module: :mc1710's dependency on the example's
+    // jar would resolve to :mc1710 itself. A separate group keeps them apart.
+    group = property("mod_group") as String + if (path.startsWith(":example")) ".example" else ""
     version = property("mod_version") as String
 
     tasks.withType<JavaCompile>().configureEach {
@@ -15,29 +21,55 @@ subprojects {
     }
 }
 
-val mcModules = listOf("mc1710", "mc1122", "mc1165")
+val compatCore = listOf(":core", ":mc1710", ":mc1122", ":mc1165")
+val mcModules = compatCore.drop(1)
+
+// Compat Core is published to the yonside Maven repo; the example is never published.
+compatCore.forEach { path ->
+    project(path) {
+        pluginManager.withPlugin("maven-publish") {
+            extensions.configure<PublishingExtension> {
+                repositories {
+                    maven {
+                        name = "yonside"
+                        val host = "https://maven.yonside.org"
+                        url = uri("$host/" + if (version.toString().endsWith("SNAPSHOT")) "snapshots" else "releases")
+                        credentials {
+                            username = providers.gradleProperty("yonsideUsername")
+                                .orElse(providers.environmentVariable("YONSIDE_USERNAME")).orNull
+                            password = providers.gradleProperty("yonsidePassword")
+                                .orElse(providers.environmentVariable("YONSIDE_PASSWORD")).orNull
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 tasks.register<Copy>("dist") {
     group = "build"
-    description = "Builds every Minecraft version and collects the release jars."
-    dependsOn(mcModules.map { ":$it:build" })
+    description = "Builds Compat Core for every Minecraft version and collects the release jars."
+    dependsOn(mcModules.map { "$it:build" })
     into(layout.buildDirectory.dir("dist"))
-    mcModules.forEach { name ->
-        from(project(":$name").layout.buildDirectory.dir("libs")) {
+    mcModules.forEach { path ->
+        from(project(path).layout.buildDirectory.dir("libs")) {
             include("*.jar")
             exclude("*-dev.jar", "*-dev-*.jar", "*-sources.jar", "*-javadoc.jar")
         }
     }
 }
 
+// The compat Gradle plugin (gradle-plugin/) is a plugin build, which Gradle keeps out of reach of this
+// build's tasks, so it is tested and published on its own: ./gradlew -p gradle-plugin check / publish.
 tasks.register("publishAll") {
     group = "publishing"
-    description = "Publishes every Minecraft version's jars to the yonside Maven repo."
-    dependsOn(mcModules.map { ":$it:publishModPublicationToYonsideRepository" })
+    description = "Publishes Compat Core (common and every Minecraft version) to the yonside Maven repo."
+    dependsOn(compatCore.map { "$it:publishCompatPublicationToYonsideRepository" })
 }
 
 tasks.register("publishAllToMavenLocal") {
     group = "publishing"
-    description = "Installs every Minecraft version's jars into ~/.m2 for testing against a consumer mod."
-    dependsOn(mcModules.map { ":$it:publishModPublicationToMavenLocal" })
+    description = "Installs Compat Core into ~/.m2 for testing against a mod outside this build."
+    dependsOn(compatCore.map { "$it:publishCompatPublicationToMavenLocal" })
 }
