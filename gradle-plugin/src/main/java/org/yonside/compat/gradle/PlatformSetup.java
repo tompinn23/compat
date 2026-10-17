@@ -107,7 +107,7 @@ final class PlatformSetup {
         JavaToolchainService toolchains = project.getExtensions().getByType(JavaToolchainService.class);
         project.getTasks().named(JavaPlugin.COMPILE_JAVA_TASK_NAME, JavaCompile.class, task -> java21(task, toolchains));
 
-        // The common project: embedded in the jar, and on the classpath with whatever it exposes as api.
+        // The common project: embedded in the jar, and on the compile classpath with whatever it exposes as api.
         Map<String, String> commonElements = Map.of("path", common.getPath(), "configuration", CommonSetup.COMMON_ELEMENTS);
         Configuration embed = project.getConfigurations().create(EMBED, c -> {
             c.setCanBeConsumed(false);
@@ -116,7 +116,9 @@ final class PlatformSetup {
             c.setDescription("The common project's jar, embedded in this project's jar.");
         });
         project.getDependencies().add(EMBED, project.getDependencies().project(commonElements));
-        project.getDependencies().add(JavaPlugin.IMPLEMENTATION_CONFIGURATION_NAME, project.getDependencies().project(commonElements));
+        // Compile-only: at runtime the common classes are in this project's own jar, and for a mod its
+        // API dependencies (Compat's API) have been linked away, so neither belongs on run classpaths.
+        project.getDependencies().add(JavaPlugin.COMPILE_ONLY_CONFIGURATION_NAME, project.getDependencies().project(commonElements));
 
         TaskProvider<Jar> jar = project.getTasks().named(JavaPlugin.JAR_TASK_NAME, Jar.class, task -> {
             task.dependsOn(embed);
